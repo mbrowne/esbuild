@@ -428,6 +428,7 @@ type Options struct {
 	UnsupportedCSSFeatureOverridesMask compat.CSSFeature
 
 	TS                TSOptions
+	DCI               bool
 	Mode              Mode
 	PreserveSymlinks  bool
 	MinifyWhitespace  bool

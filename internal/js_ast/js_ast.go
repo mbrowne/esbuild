@@ -387,6 +387,16 @@ type Class struct {
 	UseDefineForClassFields bool
 }
 
+type Context struct {
+	Decorators     []Decorator
+	Name           *LocRef
+	ExtendsOrNil   Expr
+	Properties     []Property
+	ContextKeyword logger.Range
+	BodyLoc        logger.Loc
+	CloseBraceLoc  logger.Loc
+}
+
 type ArrayBinding struct {
 	Binding           Binding
 	DefaultValueOrNil Expr
@@ -899,6 +909,7 @@ func (*SEnum) isStmt()          {}
 func (*SNamespace) isStmt()     {}
 func (*SFunction) isStmt()      {}
 func (*SClass) isStmt()         {}
+func (*SContext) isStmt()       {} // dci
 func (*SLabel) isStmt()         {}
 func (*SIf) isStmt()            {}
 func (*SFor) isStmt()           {}
@@ -1024,6 +1035,12 @@ type SClass struct {
 	IsExport bool
 }
 
+// dci
+type SContext struct {
+	Context  Context
+	IsExport bool
+}
+
 type SLabel struct {
 	Stmt Stmt
 	Name LocRef
@@ -1144,6 +1161,7 @@ const (
 	LocalVar LocalKind = iota
 	LocalLet
 	LocalConst
+	LocalUsing
 )
 
 type SLocal struct {
@@ -1595,6 +1613,7 @@ const (
 	ScopeWith
 	ScopeLabel
 	ScopeClassName
+	ScopeContextName // dci
 	ScopeClassBody
 	ScopeCatchBinding
 

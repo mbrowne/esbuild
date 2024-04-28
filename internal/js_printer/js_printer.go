@@ -3481,12 +3481,14 @@ func (p *printer) printForLoopInit(init js_ast.Stmt, flags printExprFlags) {
 		p.printExpr(s.Value, js_ast.LLowest, flags|exprResultIsUnused)
 	case *js_ast.SLocal:
 		switch s.Kind {
-		case js_ast.LocalVar:
-			p.printDecls("var", s.Decls, flags)
-		case js_ast.LocalLet:
-			p.printDecls("let", s.Decls, flags)
 		case js_ast.LocalConst:
 			p.printDecls("const", s.Decls, flags)
+		case js_ast.LocalLet:
+			p.printDecls("let", s.Decls, flags)
+		case js_ast.LocalUsing:
+			p.printDecls("using", s.Decls, flags)
+		case js_ast.LocalVar:
+			p.printDecls("var", s.Decls, flags)
 		}
 	default:
 		panic("Internal error")
@@ -3927,6 +3929,22 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 		p.printClass(s.Class)
 		p.printNewline()
 
+	// dci
+	case *js_ast.SContext:
+		p.printIndent()
+		p.printSpaceBeforeIdentifier()
+		p.addSourceMapping(stmt.Loc)
+		if s.IsExport {
+			p.print("export ")
+		}
+		p.print("context ")
+		name := p.renamer.NameForSymbol(s.Context.Name.Ref)
+		p.addSourceMappingForName(s.Context.Name.Loc, name, s.Context.Name.Ref)
+		p.printIdentifier(name)
+		// TODO
+		// p.printContext(s.Context)
+		p.printNewline()
+
 	case *js_ast.SEmpty:
 		p.addSourceMapping(stmt.Loc)
 		p.printIndent()
@@ -3987,6 +4005,20 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 				p.printIdentifier(name)
 			}
 			p.printClass(s2.Class)
+			p.printNewline()
+
+		// dci
+		case *js_ast.SContext:
+			p.printSpaceBeforeIdentifier()
+			p.print("context")
+			if s2.Context.Name != nil {
+				p.print(" ")
+				name := p.renamer.NameForSymbol(s2.Context.Name.Ref)
+				p.addSourceMappingForName(s2.Context.Name.Loc, name, s2.Context.Name.Ref)
+				p.printIdentifier(name)
+			}
+			// TODO
+			// p.printContext(s2.Context)
 			p.printNewline()
 
 		default:

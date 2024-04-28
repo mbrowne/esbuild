@@ -79,6 +79,8 @@ package api
 import (
 	"time"
 
+	"github.com/evanw/esbuild/internal/js_ast"
+	"github.com/evanw/esbuild/internal/js_parser"
 	"github.com/evanw/esbuild/internal/logger"
 )
 
@@ -259,6 +261,14 @@ const (
 	MangleQuotedFalse MangleQuoted = iota
 	MangleQuotedTrue
 )
+
+// added to expose parser for DCI
+////////////////////////////////////////////////////////////////////////////////
+// Parse API
+
+func Parse(log logger.Log, source logger.Source, options js_parser.Options) (result js_ast.AST, ok bool) {
+	return js_parser.Parse(log, source, options)
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Build API
