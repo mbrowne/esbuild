@@ -5,7 +5,6 @@ package graph
 
 import (
 	"github.com/evanw/esbuild/internal/ast"
-	"github.com/evanw/esbuild/internal/helpers"
 	"github.com/evanw/esbuild/internal/js_ast"
 	"github.com/evanw/esbuild/internal/logger"
 )
@@ -67,7 +66,7 @@ type JSReprMeta struct {
 	// type checking. That causes the TypeScript type checker to emit the error
 	// "Re-exporting a type when the '--isolatedModules' flag is provided requires
 	// using 'export type'." But we try to be robust to such code anyway.
-	IsProbablyTypeScriptType map[ast.Ref]bool
+	IsProbablyTypeScriptType map[js_ast.Ref]bool
 
 	// Imports are matched with exports in a separate pass from when the matched
 	// exports are actually bound to the imports. Here "binding" means adding non-
@@ -84,7 +83,7 @@ type JSReprMeta struct {
 	//
 	// This array holds the deferred imports to bind so the pass can be split
 	// into two separate passes.
-	ImportsToBind map[ast.Ref]ImportData
+	ImportsToBind map[js_ast.Ref]ImportData
 
 	// This includes both named exports and re-exports.
 	//
@@ -93,9 +92,8 @@ type JSReprMeta struct {
 	//
 	// Re-exports come from other files and are the result of resolving export
 	// star statements (i.e. "export * from 'foo'").
-	ResolvedExports     map[string]ExportData
-	ResolvedExportStar  *ExportData
-	ResolvedExportTypos *helpers.TypoDetector
+	ResolvedExports    map[string]ExportData
+	ResolvedExportStar *ExportData
 
 	// Never iterate over "resolvedExports" directly. Instead, iterate over this
 	// array. Some exports in that map aren't meant to end up in generated code.
@@ -106,12 +104,12 @@ type JSReprMeta struct {
 	// This is merged on top of the corresponding map from the parser in the AST.
 	// You should call "TopLevelSymbolToParts" to access this instead of accessing
 	// it directly.
-	TopLevelSymbolToPartsOverlay map[ast.Ref][]uint32
+	TopLevelSymbolToPartsOverlay map[js_ast.Ref][]uint32
 
 	// If this is an entry point, this array holds a reference to one free
 	// temporary symbol for each entry in "sortedAndFilteredExportAliases".
 	// These may be needed to store copies of CommonJS re-exports in ESM.
-	CJSExportCopies []ast.Ref
+	CJSExportCopies []js_ast.Ref
 
 	// The index of the automatically-generated part used to represent the
 	// CommonJS or ESM wrapper. This part is empty and is only useful for tree
@@ -168,7 +166,7 @@ type ImportData struct {
 	ReExports []js_ast.Dependency
 
 	NameLoc     logger.Loc // Optional, goes with sourceIndex, ignore if zero
-	Ref         ast.Ref
+	Ref         js_ast.Ref
 	SourceIndex uint32
 }
 
@@ -196,7 +194,7 @@ type ExportData struct {
 	// deferred until import resolution time. That is done using this array.
 	PotentiallyAmbiguousExportStarRefs []ImportData
 
-	Ref ast.Ref
+	Ref js_ast.Ref
 
 	// This is the file that the named export above came from. This will be
 	// different from the file that contains this object if this is a re-export.

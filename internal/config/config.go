@@ -9,7 +9,6 @@ import (
 
 	"github.com/evanw/esbuild/internal/ast"
 	"github.com/evanw/esbuild/internal/compat"
-	"github.com/evanw/esbuild/internal/css_ast"
 	"github.com/evanw/esbuild/internal/js_ast"
 	"github.com/evanw/esbuild/internal/logger"
 )
@@ -193,12 +192,9 @@ const (
 	LoaderDefault
 	LoaderEmpty
 	LoaderFile
-	LoaderGlobalCSS
 	LoaderJS
 	LoaderJSON
-	LoaderWithTypeJSON // Has a "with { type: 'json' }" attribute
 	LoaderJSX
-	LoaderLocalCSS
 	LoaderText
 	LoaderTS
 	LoaderTSNoAmbiguousLessThan // Used with ".mts" and ".cts"
@@ -215,12 +211,9 @@ var LoaderToString = []string{
 	"default",
 	"empty",
 	"file",
-	"global-css",
 	"js",
 	"json",
-	"json",
 	"jsx",
-	"local-css",
 	"text",
 	"ts",
 	"ts",
@@ -231,29 +224,18 @@ func (loader Loader) IsTypeScript() bool {
 	switch loader {
 	case LoaderTS, LoaderTSNoAmbiguousLessThan, LoaderTSX:
 		return true
+	default:
+		return false
 	}
-	return false
-}
-
-func (loader Loader) IsCSS() bool {
-	switch loader {
-	case
-		LoaderCSS, LoaderGlobalCSS, LoaderLocalCSS:
-		return true
-	}
-	return false
 }
 
 func (loader Loader) CanHaveSourceMap() bool {
 	switch loader {
-	case
-		LoaderJS, LoaderJSX,
-		LoaderTS, LoaderTSNoAmbiguousLessThan, LoaderTSX,
-		LoaderCSS, LoaderGlobalCSS, LoaderLocalCSS,
-		LoaderJSON, LoaderWithTypeJSON, LoaderText:
+	case LoaderJS, LoaderJSX, LoaderTS, LoaderTSNoAmbiguousLessThan, LoaderTSX, LoaderCSS, LoaderJSON:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 type Format uint8
@@ -394,16 +376,12 @@ type Options struct {
 	// parallel so only property mangling is serialized, which is implemented by
 	// this function blocking until the previous entry point's property mangling
 	// has finished.
-	ExclusiveMangleCacheUpdate func(cb func(
-		mangleCache map[string]interface{},
-		cssUsedLocalNames map[string]bool,
-	))
+	ExclusiveMangleCacheUpdate func(cb func(mangleCache map[string]interface{}))
 
 	// This is the original information that was used to generate the
 	// unsupported feature sets above. It's used for error messages.
 	OriginalTargetEnv string
 
-	DropLabels       []string
 	ExtensionOrder   []string
 	MainFields       []string
 	Conditions       []string
@@ -440,9 +418,7 @@ type Options struct {
 	SourceRoot string
 	Stdin      *StdinInfo
 	JSX        JSXOptions
-	LineLimit  int
 
-	CSSPrefixData          map[css_ast.D]compat.CSSPrefix
 	UnsupportedJSFeatures  compat.JSFeature
 	UnsupportedCSSFeatures compat.CSSFeature
 
@@ -452,6 +428,7 @@ type Options struct {
 	UnsupportedCSSFeatureOverridesMask compat.CSSFeature
 
 	TS                TSOptions
+	DCI               bool
 	Mode              Mode
 	PreserveSymlinks  bool
 	MinifyWhitespace  bool
@@ -814,28 +791,4 @@ type OnLoadResult struct {
 	AbsWatchDirs  []string
 
 	Loader Loader
-}
-
-func PrettyPrintTargetEnvironment(originalTargetEnv string, unsupportedJSFeatureOverridesMask compat.JSFeature) (where string) {
-	where = "the configured target environment"
-	overrides := ""
-	if unsupportedJSFeatureOverridesMask != 0 {
-		count := 0
-		mask := unsupportedJSFeatureOverridesMask
-		for mask != 0 {
-			if (mask & 1) != 0 {
-				count++
-			}
-			mask >>= 1
-		}
-		s := "s"
-		if count == 1 {
-			s = ""
-		}
-		overrides = fmt.Sprintf(" + %d override%s", count, s)
-	}
-	if originalTargetEnv != "" {
-		where = fmt.Sprintf("%s (%s%s)", where, originalTargetEnv, overrides)
-	}
-	return
 }

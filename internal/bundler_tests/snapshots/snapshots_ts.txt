@@ -58,7 +58,7 @@ console.log(
 // not-supported.ts
 var NonIntegerNumberToString = ((NonIntegerNumberToString2) => {
   NonIntegerNumberToString2["SUPPORTED"] = "1";
-  NonIntegerNumberToString2["UNSUPPORTED"] = "" + 1.5;
+  NonIntegerNumberToString2[NonIntegerNumberToString2["UNSUPPORTED"] = "" + 1.5] = "UNSUPPORTED";
   return NonIntegerNumberToString2;
 })(NonIntegerNumberToString || {});
 console.log(
@@ -67,18 +67,25 @@ console.log(
 );
 var OutOfBoundsNumberToString = ((OutOfBoundsNumberToString2) => {
   OutOfBoundsNumberToString2["SUPPORTED"] = "1000000000";
-  OutOfBoundsNumberToString2["UNSUPPORTED"] = "" + 1e12;
+  OutOfBoundsNumberToString2[OutOfBoundsNumberToString2["UNSUPPORTED"] = "" + 1e12] = "UNSUPPORTED";
   return OutOfBoundsNumberToString2;
 })(OutOfBoundsNumberToString || {});
 console.log(
   "1000000000" /* SUPPORTED */,
   OutOfBoundsNumberToString.UNSUPPORTED
 );
+var TemplateExpressions = ((TemplateExpressions2) => {
+  TemplateExpressions2[TemplateExpressions2["NULL"] = "" + null] = "NULL";
+  TemplateExpressions2[TemplateExpressions2["TRUE"] = "" + true] = "TRUE";
+  TemplateExpressions2[TemplateExpressions2["FALSE"] = "" + false] = "FALSE";
+  TemplateExpressions2[TemplateExpressions2["BIGINT"] = "" + 123n] = "BIGINT";
+  return TemplateExpressions2;
+})(TemplateExpressions || {});
 console.log(
-  "null" /* NULL */,
-  "true" /* TRUE */,
-  "false" /* FALSE */,
-  "123" /* BIGINT */
+  TemplateExpressions.NULL,
+  TemplateExpressions.TRUE,
+  TemplateExpressions.FALSE,
+  TemplateExpressions.BIGINT
 );
 
 ================================================================================
@@ -294,46 +301,27 @@ var foo = bar();
 TestTSEnumCrossModuleInliningAccess
 ---------- /out/entry.js ----------
 // enums.ts
-var c_num = /* @__PURE__ */ ((c_num2) => {
-  c_num2[c_num2["x"] = 123] = "x";
-  return c_num2;
-})(c_num || {});
-var d_num = /* @__PURE__ */ ((d_num2) => {
-  d_num2[d_num2["x"] = 123] = "x";
-  return d_num2;
-})(d_num || {});
-var e_num = /* @__PURE__ */ ((e_num2) => {
-  e_num2[e_num2["x"] = 123] = "x";
-  return e_num2;
-})(e_num || {});
-var c_str = /* @__PURE__ */ ((c_str2) => {
-  c_str2["x"] = "abc";
-  return c_str2;
-})(c_str || {});
-var d_str = /* @__PURE__ */ ((d_str2) => {
-  d_str2["x"] = "abc";
-  return d_str2;
-})(d_str || {});
-var e_str = /* @__PURE__ */ ((e_str2) => {
-  e_str2["x"] = "abc";
-  return e_str2;
-})(e_str || {});
+var c = /* @__PURE__ */ ((c2) => {
+  c2[c2["x"] = 123] = "x";
+  return c2;
+})(c || {});
+var d = /* @__PURE__ */ ((d2) => {
+  d2[d2["x"] = 123] = "x";
+  return d2;
+})(d || {});
+var e = /* @__PURE__ */ ((e2) => {
+  e2[e2["x"] = 123] = "x";
+  return e2;
+})(e || {});
 
 // entry.ts
-inlined = [
+console.log([
   123 /* x */,
   123 /* x */,
-  "abc" /* x */,
-  "abc" /* x */
-];
-not_inlined = [
-  c_num?.x,
-  d_num?.["x"],
-  e_num,
-  c_str?.x,
-  d_str?.["x"],
-  e_str
-];
+  c?.x,
+  d?.["x"],
+  e
+]);
 
 ================================================================================
 TestTSEnumCrossModuleInliningDefinitions
@@ -354,27 +342,6 @@ console.log([
   "xyz" /* explicit_string */,
   a.non_constant
 ]);
-
-================================================================================
-TestTSEnumCrossModuleInliningMinifyIndexIntoDot
----------- /out.js ----------
-// entry.ts
-inlined = [
-  obj.abc,
-  obj.xyz,
-  obj?.abc,
-  obj?.xyz,
-  obj?.prop.abc,
-  obj?.prop.xyz
-];
-notInlined = [
-  obj["a b c" /* foo2 */],
-  obj["x y z" /* bar2 */],
-  obj?.["a b c" /* foo2 */],
-  obj?.["x y z" /* bar2 */],
-  obj?.prop["a b c" /* foo2 */],
-  obj?.prop["x y z" /* bar2 */]
-];
 
 ================================================================================
 TestTSEnumCrossModuleInliningReExport
@@ -498,44 +465,25 @@ var x;
 TestTSEnumSameModuleInliningAccess
 ---------- /out/entry.js ----------
 // entry.ts
-var c_num = /* @__PURE__ */ ((c_num2) => {
-  c_num2[c_num2["x"] = 123] = "x";
-  return c_num2;
-})(c_num || {});
-var d_num = /* @__PURE__ */ ((d_num2) => {
-  d_num2[d_num2["x"] = 123] = "x";
-  return d_num2;
-})(d_num || {});
-var e_num = /* @__PURE__ */ ((e_num2) => {
-  e_num2[e_num2["x"] = 123] = "x";
-  return e_num2;
-})(e_num || {});
-var c_str = /* @__PURE__ */ ((c_str2) => {
-  c_str2["x"] = "abc";
-  return c_str2;
-})(c_str || {});
-var d_str = /* @__PURE__ */ ((d_str2) => {
-  d_str2["x"] = "abc";
-  return d_str2;
-})(d_str || {});
-var e_str = /* @__PURE__ */ ((e_str2) => {
-  e_str2["x"] = "abc";
-  return e_str2;
-})(e_str || {});
-inlined = [
+var c = /* @__PURE__ */ ((c2) => {
+  c2[c2["x"] = 123] = "x";
+  return c2;
+})(c || {});
+var d = /* @__PURE__ */ ((d2) => {
+  d2[d2["x"] = 123] = "x";
+  return d2;
+})(d || {});
+var e = /* @__PURE__ */ ((e2) => {
+  e2[e2["x"] = 123] = "x";
+  return e2;
+})(e || {});
+console.log([
   123 /* x */,
   123 /* x */,
-  "abc" /* x */,
-  "abc" /* x */
-];
-not_inlined = [
-  c_num?.x,
-  d_num?.["x"],
-  e_num,
-  c_str?.x,
-  d_str?.["x"],
-  e_str
-];
+  c?.x,
+  d?.["x"],
+  e
+]);
 
 ================================================================================
 TestTSEnumTreeShaking
@@ -720,10 +668,6 @@ __decorateClass([
 __decorateClass([
   x,
   y
-], Foo.prototype, "mAbst", 2);
-__decorateClass([
-  x,
-  y
 ], Foo, "sUndef", 2);
 __decorateClass([
   x,
@@ -751,24 +695,24 @@ Foo = __decorateClass([
 ], Foo);
 
 // all_computed.ts
-var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
 var Foo2 = class {
   constructor() {
     this[_b] = 1;
-    this[_f] = 2;
+    this[_e] = 2;
   }
   static {
-    _k = mDecl();
+    _j = mDecl();
   }
   [(_a = mUndef(), _b = mDef(), _c = method())](arg0, arg1) {
     return new Foo2();
   }
-  static [(_d = mDecl(), _e = mAbst(), xUndef(), _f = xDef(), yUndef(), _g = yDef(), _h = sUndef(), _i = sDef(), _j = sMethod())](arg0, arg1) {
+  static [(_d = mDecl(), xUndef(), _e = xDef(), yUndef(), _f = yDef(), _g = sUndef(), _h = sDef(), _i = sMethod())](arg0, arg1) {
     return new Foo2();
   }
 };
-Foo2[_g] = 3;
-Foo2[_i] = new Foo2();
+Foo2[_f] = 3;
+Foo2[_h] = new Foo2();
 __decorateClass([
   x,
   y
@@ -792,15 +736,11 @@ __decorateClass([
 __decorateClass([
   x,
   y
-], Foo2.prototype, _e, 2);
+], Foo2, _g, 2);
 __decorateClass([
   x,
   y
 ], Foo2, _h, 2);
-__decorateClass([
-  x,
-  y
-], Foo2, _i, 2);
 __decorateClass([
   x,
   y,
@@ -808,11 +748,11 @@ __decorateClass([
   __decorateParam(0, y0),
   __decorateParam(1, x1),
   __decorateParam(1, y1)
-], Foo2, _j, 1);
+], Foo2, _i, 1);
 __decorateClass([
   x,
   y
-], Foo2, _k, 2);
+], Foo2, _j, 2);
 Foo2 = __decorateClass([
   x?.[_ + "y"](),
   new y?.[_ + "x"]()
@@ -1186,34 +1126,74 @@ TestTSExperimentalDecoratorsNoConfig
 ---------- /out.js ----------
 // entry.ts
 var Foo = @x.y() @(new y.x()) class _Foo {
-  @x @y mUndef;
-  @x @y mDef = 1;
-  @x @y method() {
+  @x
+  @y
+  mUndef;
+  @x
+  @y
+  mDef = 1;
+  @x
+  @y
+  method() {
     return new _Foo();
   }
-  @x @y accessor aUndef;
-  @x @y accessor aDef = 1;
-  @x @y static sUndef;
-  @x @y static sDef = new _Foo();
-  @x @y static sMethod() {
+  @x
+  @y
+  accessor aUndef;
+  @x
+  @y
+  accessor aDef = 1;
+  @x
+  @y
+  static sUndef;
+  @x
+  @y
+  static sDef = new _Foo();
+  @x
+  @y
+  static sMethod() {
     return new _Foo();
   }
-  @x @y static accessor asUndef;
-  @x @y static accessor asDef = 1;
-  @x @y #mUndef;
-  @x @y #mDef = 1;
-  @x @y #method() {
+  @x
+  @y
+  static accessor asUndef;
+  @x
+  @y
+  static accessor asDef = 1;
+  @x
+  @y
+  #mUndef;
+  @x
+  @y
+  #mDef = 1;
+  @x
+  @y
+  #method() {
     return new _Foo();
   }
-  @x @y accessor #aUndef;
-  @x @y accessor #aDef = 1;
-  @x @y static #sUndef;
-  @x @y static #sDef = 1;
-  @x @y static #sMethod() {
+  @x
+  @y
+  accessor #aUndef;
+  @x
+  @y
+  accessor #aDef = 1;
+  @x
+  @y
+  static #sUndef;
+  @x
+  @y
+  static #sDef = 1;
+  @x
+  @y
+  static #sMethod() {
     return new _Foo();
   }
-  @x @y static accessor #asUndef;
-  @x @y static accessor #asDef = 1;
+  @x
+  @y
+  static accessor #asUndef;
+  @x
+  @y
+  static accessor #asDef = 1;
 };
 export {
   Foo as default
@@ -1374,36 +1354,6 @@ console.log("correct");
 // order-jsx.ts
 console.log("correct");
 
-// node_modules/pkg/foo-js.ts
-console.log("correct");
-
-// node_modules/pkg/foo-jsx.tsx
-console.log("correct");
-
-// node_modules/pkg-exports/abc-js.ts
-console.log("correct");
-
-// node_modules/pkg-exports/abc-jsx.tsx
-console.log("correct");
-
-// node_modules/pkg-exports/lib/foo-js.ts
-console.log("correct");
-
-// node_modules/pkg-exports/lib/foo-jsx.tsx
-console.log("correct");
-
-// node_modules/pkg-imports/abc-js.ts
-console.log("correct");
-
-// node_modules/pkg-imports/abc-jsx.tsx
-console.log("correct");
-
-// node_modules/pkg-imports/lib/foo-js.ts
-console.log("correct");
-
-// node_modules/pkg-imports/lib/foo-jsx.tsx
-console.log("correct");
-
 ================================================================================
 TestTSImportCTS
 ---------- /out.js ----------
@@ -1452,6 +1402,7 @@ TestTSImportEqualsTreeShakingFalse
 ---------- /out.js ----------
 import { foo } from "pkg";
 const used = foo.used;
+const unused = foo.unused;
 export { used };
 
 ================================================================================
@@ -1460,46 +1411,6 @@ TestTSImportEqualsTreeShakingTrue
 import { foo } from "pkg";
 const used = foo.used;
 export { used };
-
-================================================================================
-TestTSImportEqualsUndefinedImport
----------- /out.js ----------
-// import.ts
-var value = 123;
-
-// entry.ts
-var value_copy = value;
-var foo = value_copy;
-console.log(foo);
-
-================================================================================
-TestTSImportInNodeModulesNameCollisionWithCSS
----------- /out.js ----------
-// node_modules/pkg/js_ts_css.js
-function js_ts_css_default() {
-}
-
-// node_modules/pkg/ts_css.ts
-function ts_css_default() {
-}
-
-// node_modules/pkg/js_ts.js
-function js_ts_default() {
-}
-
-// node_modules/pkg/index.ts
-js_ts_css_default();
-ts_css_default();
-js_ts_default();
-
----------- /out.css ----------
-/* node_modules/pkg/js_ts_css.css */
-.js_ts_css {
-}
-
-/* node_modules/pkg/ts_css.css */
-.ts_css {
-}
 
 ================================================================================
 TestTSImportMTS
@@ -1575,17 +1486,6 @@ var Foo=(e=>(e[e.A=0]="A",e[e.B=1]="B",e[e.C=e]="C",e))(Foo||{});
 
 ---------- /b.js ----------
 export var Foo=(e=>(e[e.X=0]="X",e[e.Y=1]="Y",e[e.Z=e]="Z",e))(Foo||{});
-
-================================================================================
-TestTSMinifyEnumCrossFileInlineStringsIntoTemplates
----------- /out.js ----------
-// entry.ts
-console.log(`
-					SameFile.STR = str 1
-					SameFile.NUM = 123
-					CrossFile.STR = str 2
-					CrossFile.NUM = 321
-				`);
 
 ================================================================================
 TestTSMinifyEnumPropertyNames
@@ -1690,45 +1590,6 @@ function foo(){let u;return(n=>(n[n.A=0]="A",n[n.B=1]="B",n[n.C=n]="C"))(u||(u={
 export function foo(){let e;return(n=>(n[n.X=0]="X",n[n.Y=1]="Y",n[n.Z=n]="Z"))(e||(e={})),e}
 
 ================================================================================
-TestTSNamespaceKeepNames
----------- /out.js ----------
-// entry.ts
-var ns;
-((ns2) => {
-  ns2.foo = /* @__PURE__ */ __name(() => {
-  }, "foo");
-  function bar() {
-  }
-  ns2.bar = bar;
-  __name(bar, "bar");
-  class Baz {
-    static {
-      __name(this, "Baz");
-    }
-  }
-  ns2.Baz = Baz;
-})(ns || (ns = {}));
-
-================================================================================
-TestTSNamespaceKeepNamesTargetES2015
----------- /out.js ----------
-// entry.ts
-var ns;
-((ns2) => {
-  ns2.foo = /* @__PURE__ */ __name(() => {
-  }, "foo");
-  function bar() {
-  }
-  ns2.bar = bar;
-  __name(bar, "bar");
-  const _Baz = class _Baz {
-  };
-  __name(_Baz, "Baz");
-  let Baz = _Baz;
-  ns2.Baz = _Baz;
-})(ns || (ns = {}));
-
-================================================================================
 TestTSPreferJSOverTSInsideNodeModules
 ---------- /out/main.js ----------
 // Users/user/project/src/relative/path.ts
@@ -1742,40 +1603,6 @@ console.log("success");
 
 // Users/user/project/node_modules/package2/path.js
 console.log("success");
-
-================================================================================
-TestTSPrintNonFiniteNumberInsideWith
----------- /out.js ----------
-var Foo = /* @__PURE__ */ ((Foo2) => {
-  Foo2[Foo2["NAN"] = NaN] = "NAN";
-  Foo2[Foo2["POS_INF"] = Infinity] = "POS_INF";
-  Foo2[Foo2["NEG_INF"] = -Infinity] = "NEG_INF";
-  return Foo2;
-})(Foo || {});
-//! It's ok to use "NaN" and "Infinity" here
-console.log(
-  NaN /* NAN */,
-  Infinity /* POS_INF */,
-  -Infinity /* NEG_INF */
-);
-checkPrecedence(
-  1 / NaN /* NAN */,
-  1 / Infinity /* POS_INF */,
-  1 / -Infinity /* NEG_INF */
-);
-//! We must not use "NaN" or "Infinity" inside "with"
-with (x) {
-  console.log(
-    0 / 0 /* NAN */,
-    1 / 0 /* POS_INF */,
-    -1 / 0 /* NEG_INF */
-  );
-  checkPrecedence(
-    1 / (0 / 0) /* NAN */,
-    1 / (1 / 0) /* POS_INF */,
-    1 / (-1 / 0) /* NEG_INF */
-  );
-}
 
 ================================================================================
 TestTSSiblingEnum

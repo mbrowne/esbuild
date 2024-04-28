@@ -56,22 +56,12 @@ type watcher struct {
 	mutex             sync.Mutex
 	itemsPerIteration int
 	shouldStop        int32
-	shouldLog         bool
-	useColor          logger.UseColor
 	stopWaitGroup     sync.WaitGroup
 }
 
 func (w *watcher) setWatchData(data fs.WatchData) {
 	defer w.mutex.Unlock()
 	w.mutex.Lock()
-
-	// Print something for the end of the first build
-	if w.shouldLog && w.data.Paths == nil {
-		logger.PrintTextWithColor(os.Stderr, w.useColor, func(colors logger.Colors) string {
-			return fmt.Sprintf("%s[watch] build finished, watching for changes...%s\n", colors.Dim, colors.Reset)
-		})
-	}
-
 	w.data = data
 	w.itemsToScan = w.itemsToScan[:0] // Reuse memory
 
@@ -86,13 +76,21 @@ func (w *watcher) setWatchData(data fs.WatchData) {
 	w.recentItems = w.recentItems[:end]
 }
 
-func (w *watcher) start() {
+func (w *watcher) start(logLevel logger.LogLevel, useColor logger.UseColor) {
 	w.stopWaitGroup.Add(1)
 
 	go func() {
+		shouldLog := logLevel == logger.LevelInfo || logLevel == logger.LevelDebug || logLevel == logger.LevelVerbose
+
 		// Note: Do not change these log messages without a breaking version change.
 		// People want to run regexes over esbuild's stderr stream to look for these
 		// messages instead of using esbuild's API.
+
+		if shouldLog {
+			logger.PrintTextWithColor(os.Stderr, useColor, func(colors logger.Colors) string {
+				return fmt.Sprintf("%s[watch] build finished, watching for changes...%s\n", colors.Dim, colors.Reset)
+			})
+		}
 
 		for atomic.LoadInt32(&w.shouldStop) == 0 {
 			// Sleep for the watch interval
@@ -100,8 +98,8 @@ func (w *watcher) start() {
 
 			// Rebuild if we're dirty
 			if absPath := w.tryToFindDirtyPath(); absPath != "" {
-				if w.shouldLog {
-					logger.PrintTextWithColor(os.Stderr, w.useColor, func(colors logger.Colors) string {
+				if shouldLog {
+					logger.PrintTextWithColor(os.Stderr, useColor, func(colors logger.Colors) string {
 						prettyPath := resolver.PrettyPath(w.fs, logger.Path{Text: absPath, Namespace: "file"})
 						return fmt.Sprintf("%s[watch] build started (change: %q)%s\n", colors.Dim, prettyPath, colors.Reset)
 					})
@@ -110,8 +108,8 @@ func (w *watcher) start() {
 				// Run the build
 				w.setWatchData(w.rebuild())
 
-				if w.shouldLog {
-					logger.PrintTextWithColor(os.Stderr, w.useColor, func(colors logger.Colors) string {
+				if shouldLog {
+					logger.PrintTextWithColor(os.Stderr, useColor, func(colors logger.Colors) string {
 						return fmt.Sprintf("%s[watch] build finished%s\n", colors.Dim, colors.Reset)
 					})
 				}

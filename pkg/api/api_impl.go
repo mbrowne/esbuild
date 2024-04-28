@@ -5,8 +5,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -27,7 +25,6 @@ import (
 	"github.com/evanw/esbuild/internal/cache"
 	"github.com/evanw/esbuild/internal/compat"
 	"github.com/evanw/esbuild/internal/config"
-	"github.com/evanw/esbuild/internal/css_ast"
 	"github.com/evanw/esbuild/internal/fs"
 	"github.com/evanw/esbuild/internal/graph"
 	"github.com/evanw/esbuild/internal/helpers"
@@ -253,16 +250,12 @@ func validateLoader(value Loader) config.Loader {
 		return config.LoaderEmpty
 	case LoaderFile:
 		return config.LoaderFile
-	case LoaderGlobalCSS:
-		return config.LoaderGlobalCSS
 	case LoaderJS:
 		return config.LoaderJS
 	case LoaderJSON:
 		return config.LoaderJSON
 	case LoaderJSX:
 		return config.LoaderJSX
-	case LoaderLocalCSS:
-		return config.LoaderLocalCSS
 	case LoaderNone:
 		return config.LoaderNone
 	case LoaderText:
@@ -276,35 +269,55 @@ func validateLoader(value Loader) config.Loader {
 	}
 }
 
-var versionRegex = regexp.MustCompile(`^([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?(-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)?$`)
+func validateEngine(value EngineName) compat.Engine {
+	switch value {
+	case EngineChrome:
+		return compat.Chrome
+	case EngineEdge:
+		return compat.Edge
+	case EngineFirefox:
+		return compat.Firefox
+	case EngineIOS:
+		return compat.IOS
+	case EngineNode:
+		return compat.Node
+	case EngineSafari:
+		return compat.Safari
+	default:
+		panic("Invalid loader")
+	}
+}
 
-func validateFeatures(log logger.Log, target Target, engines []Engine) (compat.JSFeature, compat.CSSFeature, map[css_ast.D]compat.CSSPrefix, string) {
+var versionRegex = regexp.MustCompile(`^([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?$`)
+var preReleaseVersionRegex = regexp.MustCompile(`^([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?-`)
+
+func validateFeatures(log logger.Log, target Target, engines []Engine) (compat.JSFeature, compat.CSSFeature, string) {
 	if target == DefaultTarget && len(engines) == 0 {
-		return 0, 0, nil, ""
+		return 0, 0, ""
 	}
 
-	constraints := make(map[compat.Engine]compat.Semver)
+	constraints := make(map[compat.Engine][]int)
 	targets := make([]string, 0, 1+len(engines))
 
 	switch target {
 	case ES5:
-		constraints[compat.ES] = compat.Semver{Parts: []int{5}}
+		constraints[compat.ES] = []int{5}
 	case ES2015:
-		constraints[compat.ES] = compat.Semver{Parts: []int{2015}}
+		constraints[compat.ES] = []int{2015}
 	case ES2016:
-		constraints[compat.ES] = compat.Semver{Parts: []int{2016}}
+		constraints[compat.ES] = []int{2016}
 	case ES2017:
-		constraints[compat.ES] = compat.Semver{Parts: []int{2017}}
+		constraints[compat.ES] = []int{2017}
 	case ES2018:
-		constraints[compat.ES] = compat.Semver{Parts: []int{2018}}
+		constraints[compat.ES] = []int{2018}
 	case ES2019:
-		constraints[compat.ES] = compat.Semver{Parts: []int{2019}}
+		constraints[compat.ES] = []int{2019}
 	case ES2020:
-		constraints[compat.ES] = compat.Semver{Parts: []int{2020}}
+		constraints[compat.ES] = []int{2020}
 	case ES2021:
-		constraints[compat.ES] = compat.Semver{Parts: []int{2021}}
+		constraints[compat.ES] = []int{2021}
 	case ES2022:
-		constraints[compat.ES] = compat.Semver{Parts: []int{2022}}
+		constraints[compat.ES] = []int{2022}
 	case ESNext, DefaultTarget:
 	default:
 		panic("Invalid target")
@@ -313,29 +326,41 @@ func validateFeatures(log logger.Log, target Target, engines []Engine) (compat.J
 	for _, engine := range engines {
 		if match := versionRegex.FindStringSubmatch(engine.Version); match != nil {
 			if major, err := strconv.Atoi(match[1]); err == nil {
-				parts := []int{major}
+				version := []int{major}
 				if minor, err := strconv.Atoi(match[2]); err == nil {
-					parts = append(parts, minor)
-					if patch, err := strconv.Atoi(match[3]); err == nil {
-						parts = append(parts, patch)
-					}
+					version = append(version, minor)
 				}
-				constraints[convertEngineName(engine.Name)] = compat.Semver{
-					Parts:      parts,
-					PreRelease: match[4],
+				if patch, err := strconv.Atoi(match[3]); err == nil {
+					version = append(version, patch)
 				}
+				constraints[convertEngineName(engine.Name)] = version
 				continue
 			}
 		}
 
 		text := "All version numbers passed to esbuild must be in the format \"X\", \"X.Y\", or \"X.Y.Z\" where X, Y, and Z are non-negative integers."
 
+		// Our internal version-to-feature database only includes version triples.
+		// We don't have any data on pre-release versions, so we don't accept them.
+		if preReleaseVersionRegex.MatchString(engine.Version) {
+			text += " Pre-release versions are not supported and cannot be used."
+		}
+
 		log.AddErrorWithNotes(nil, logger.Range{}, fmt.Sprintf("Invalid version: %q", engine.Version),
 			[]logger.MsgData{{Text: text}})
 	}
 
 	for engine, version := range constraints {
-		targets = append(targets, engine.String()+version.String())
+		var text string
+		switch len(version) {
+		case 1:
+			text = fmt.Sprintf("%s%d", engine.String(), version[0])
+		case 2:
+			text = fmt.Sprintf("%s%d.%d", engine.String(), version[0], version[1])
+		case 3:
+			text = fmt.Sprintf("%s%d.%d.%d", engine.String(), version[0], version[1], version[2])
+		}
+		targets = append(targets, text)
 	}
 	if target == ESNext {
 		targets = append(targets, "esnext")
@@ -344,7 +369,7 @@ func validateFeatures(log logger.Log, target Target, engines []Engine) (compat.J
 	sort.Strings(targets)
 	targetEnv := helpers.StringArrayToQuotedCommaSeparatedString(targets)
 
-	return compat.UnsupportedJSFeatures(constraints), compat.UnsupportedCSSFeatures(constraints), compat.CSSPrefixData(constraints), targetEnv
+	return compat.UnsupportedJSFeatures(constraints), compat.UnsupportedCSSFeatures(constraints), targetEnv
 }
 
 func validateSupported(log logger.Log, supported map[string]bool) (
@@ -435,6 +460,37 @@ func validateExternals(log logger.Log, fs fs.FS, paths []string) config.External
 	return result
 }
 
+func esmParsePackageName(packageSpecifier string) (packageName string, packageSubpath string, ok bool) {
+	if packageSpecifier == "" {
+		return
+	}
+
+	slash := strings.IndexByte(packageSpecifier, '/')
+	if !strings.HasPrefix(packageSpecifier, "@") {
+		if slash == -1 {
+			slash = len(packageSpecifier)
+		}
+		packageName = packageSpecifier[:slash]
+	} else {
+		if slash == -1 {
+			return
+		}
+		slash2 := strings.IndexByte(packageSpecifier[slash+1:], '/')
+		if slash2 == -1 {
+			slash2 = len(packageSpecifier[slash+1:])
+		}
+		packageName = packageSpecifier[:slash+1+slash2]
+	}
+
+	if strings.HasPrefix(packageName, ".") || strings.ContainsAny(packageName, "\\%") {
+		return
+	}
+
+	packageSubpath = "." + packageSpecifier[len(packageName):]
+	ok = true
+	return
+}
+
 func validateAlias(log logger.Log, fs fs.FS, alias map[string]string) map[string]string {
 	valid := make(map[string]string, len(alias))
 
@@ -490,11 +546,13 @@ func validateResolveExtensions(log logger.Log, order []string) []string {
 
 func validateLoaders(log logger.Log, loaders map[string]Loader) map[string]config.Loader {
 	result := bundler.DefaultExtensionToLoaderMap()
-	for ext, loader := range loaders {
-		if ext != "" && !isValidExtension(ext) {
-			log.AddError(nil, logger.Range{}, fmt.Sprintf("Invalid file extension: %q", ext))
+	if loaders != nil {
+		for ext, loader := range loaders {
+			if ext != "" && !isValidExtension(ext) {
+				log.AddError(nil, logger.Range{}, fmt.Sprintf("Invalid file extension: %q", ext))
+			}
+			result[ext] = validateLoader(loader)
 		}
-		result[ext] = validateLoader(loader)
 	}
 	return result
 }
@@ -644,7 +702,7 @@ func validateDefines(
 	// If we're dropping all console API calls, replace each one with undefined
 	if (drop & DropConsole) != 0 {
 		define := rawDefines["console"]
-		define.Flags |= config.MethodCallsMustBeReplacedWithUndefined
+		define.MethodCallsMustBeReplacedWithUndefined = true
 		rawDefines["console"] = define
 	}
 
@@ -659,7 +717,7 @@ func validateDefines(
 
 		// Merge with any previously-specified defines
 		define := rawDefines[key]
-		define.Flags |= config.CallCanBeUnwrappedIfUnused
+		define.CallCanBeUnwrappedIfUnused = true
 		rawDefines[key] = define
 	}
 
@@ -717,15 +775,6 @@ func validateBannerOrFooter(log logger.Log, name string, values map[string]strin
 		}
 	}
 	return
-}
-
-func validateKeepNames(log logger.Log, options *config.Options) {
-	if options.KeepNames && options.UnsupportedJSFeatures.Has(compat.FunctionNameConfigurable) {
-		where := config.PrettyPrintTargetEnvironment(options.OriginalTargetEnv, options.UnsupportedJSFeatureOverridesMask)
-		log.AddErrorWithNotes(nil, logger.Range{}, fmt.Sprintf("The \"keep names\" setting cannot be used with %s", where), []logger.MsgData{{
-			Text: "In this environment, the \"Function.prototype.name\" property is not configurable and assigning to it will throw an error. " +
-				"Either use a newer target environment or disable the \"keep names\" setting."}})
-	}
 }
 
 func convertLocationToPublic(loc *logger.MsgLocation) *Location {
@@ -931,16 +980,12 @@ type internalContext struct {
 	args          rebuildArgs
 	activeBuild   *buildInProgress
 	recentBuild   *BuildResult
+	latestSummary buildSummary
 	realFS        fs.FS
 	absWorkingDir string
 	watcher       *watcher
 	handler       *apiHandler
 	didDispose    bool
-
-	// This saves just enough information to be able to compute a useful diff
-	// between two sets of output files. That way we don't need to hold both
-	// sets of output files in memory at once to compute a diff.
-	latestHashes map[string]string
 }
 
 func (ctx *internalContext) rebuild() rebuildState {
@@ -966,15 +1011,14 @@ func (ctx *internalContext) rebuild() rebuildState {
 	args := ctx.args
 	watcher := ctx.watcher
 	handler := ctx.handler
-	oldHashes := ctx.latestHashes
+	oldSummary := ctx.latestSummary
 	args.options.CancelFlag = &build.cancel
 	ctx.mutex.Unlock()
 
 	// Do the build without holding the mutex
-	var newHashes map[string]string
-	build.state, newHashes = rebuildImpl(args, oldHashes)
+	build.state = rebuildImpl(args, oldSummary)
 	if handler != nil {
-		handler.broadcastBuildResult(build.state.result, newHashes)
+		handler.broadcastBuildResult(build.state.result, build.state.summary)
 	}
 	if watcher != nil {
 		watcher.setWatchData(build.state.watchData)
@@ -985,7 +1029,7 @@ func (ctx *internalContext) rebuild() rebuildState {
 	ctx.mutex.Lock()
 	ctx.activeBuild = nil
 	ctx.recentBuild = recentBuild
-	ctx.latestHashes = newHashes
+	ctx.latestSummary = build.state.summary
 	ctx.mutex.Unlock()
 
 	// Clear the recent build after it goes stale
@@ -1050,11 +1094,8 @@ func (ctx *internalContext) Watch(options WatchOptions) error {
 		return errors.New("Watch mode has already been enabled")
 	}
 
-	logLevel := ctx.args.logOptions.LogLevel
 	ctx.watcher = &watcher{
-		fs:        ctx.realFS,
-		shouldLog: logLevel == logger.LevelInfo || logLevel == logger.LevelDebug || logLevel == logger.LevelVerbose,
-		useColor:  ctx.args.logOptions.Color,
+		fs: ctx.realFS,
 		rebuild: func() fs.WatchData {
 			return ctx.rebuild().watchData
 		},
@@ -1064,7 +1105,7 @@ func (ctx *internalContext) Watch(options WatchOptions) error {
 	ctx.args.options.WatchMode = true
 
 	// Start the file watcher goroutine
-	ctx.watcher.start()
+	ctx.watcher.start(ctx.args.logOptions.LogLevel, ctx.args.logOptions.Color)
 
 	// Do the first watch mode build on another goroutine
 	go func() {
@@ -1202,7 +1243,7 @@ func validateBuildOptions(
 	options config.Options,
 	entryPoints []bundler.EntryPoint,
 ) {
-	jsFeatures, cssFeatures, cssPrefixData, targetEnv := validateFeatures(log, buildOpts.Target, buildOpts.Engines)
+	jsFeatures, cssFeatures, targetEnv := validateFeatures(log, buildOpts.Target, buildOpts.Engines)
 	jsOverrides, jsMask, cssOverrides, cssMask := validateSupported(log, buildOpts.Supported)
 	outJS, outCSS := validateOutputExtensions(log, buildOpts.OutExtension)
 	bannerJS, bannerCSS := validateBannerOrFooter(log, "banner", buildOpts.Banner)
@@ -1211,7 +1252,6 @@ func validateBuildOptions(
 	platform := validatePlatform(buildOpts.Platform)
 	defines, injectedDefines := validateDefines(log, buildOpts.Define, buildOpts.Pure, platform, true /* isBuildAPI */, minify, buildOpts.Drop)
 	options = config.Options{
-		CSSPrefixData:                      cssPrefixData,
 		UnsupportedJSFeatures:              jsFeatures.ApplyOverrides(jsOverrides, jsMask),
 		UnsupportedCSSFeatures:             cssFeatures.ApplyOverrides(cssOverrides, cssMask),
 		UnsupportedJSFeatureOverrides:      jsOverrides,
@@ -1238,11 +1278,9 @@ func validateBuildOptions(
 		MinifySyntax:          buildOpts.MinifySyntax,
 		MinifyWhitespace:      buildOpts.MinifyWhitespace,
 		MinifyIdentifiers:     buildOpts.MinifyIdentifiers,
-		LineLimit:             buildOpts.LineLimit,
 		MangleProps:           validateRegex(log, "mangle props", buildOpts.MangleProps),
 		ReserveProps:          validateRegex(log, "reserve props", buildOpts.ReserveProps),
 		MangleQuoted:          buildOpts.MangleQuoted == MangleQuotedTrue,
-		DropLabels:            append([]string{}, buildOpts.DropLabels...),
 		DropDebugger:          (buildOpts.Drop & DropDebugger) != 0,
 		AllowOverwrite:        buildOpts.AllowOverwrite,
 		ASCIIOnly:             validateASCIIOnly(buildOpts.Charset),
@@ -1278,7 +1316,6 @@ func validateBuildOptions(
 		CSSFooter:             footerCSS,
 		PreserveSymlinks:      buildOpts.PreserveSymlinks,
 	}
-	validateKeepNames(log, &options)
 	if buildOpts.Conditions != nil {
 		options.Conditions = append([]string{}, buildOpts.Conditions...)
 	}
@@ -1289,18 +1326,11 @@ func validateBuildOptions(
 		options.AbsNodePaths[i] = validatePath(log, realFS, path, "node path")
 	}
 	entryPoints = make([]bundler.EntryPoint, 0, len(buildOpts.EntryPoints)+len(buildOpts.EntryPointsAdvanced))
-	hasEntryPointWithWildcard := false
 	for _, ep := range buildOpts.EntryPoints {
 		entryPoints = append(entryPoints, bundler.EntryPoint{InputPath: ep})
-		if strings.ContainsRune(ep, '*') {
-			hasEntryPointWithWildcard = true
-		}
 	}
 	for _, ep := range buildOpts.EntryPointsAdvanced {
 		entryPoints = append(entryPoints, bundler.EntryPoint{InputPath: ep.InputPath, OutputPath: ep.OutputPath})
-		if strings.ContainsRune(ep.InputPath, '*') {
-			hasEntryPointWithWildcard = true
-		}
 	}
 	entryPointCount := len(entryPoints)
 	if buildOpts.Stdin != nil {
@@ -1313,7 +1343,7 @@ func validateBuildOptions(
 		}
 	}
 
-	if options.AbsOutputDir == "" && (entryPointCount > 1 || hasEntryPointWithWildcard) {
+	if options.AbsOutputDir == "" && entryPointCount > 1 {
 		log.AddError(nil, logger.Range{},
 			"Must use \"outdir\" when there are multiple input files")
 	} else if options.AbsOutputDir == "" && options.CodeSplitting {
@@ -1421,11 +1451,12 @@ type rebuildArgs struct {
 
 type rebuildState struct {
 	result    BuildResult
+	summary   buildSummary
 	watchData fs.WatchData
 	options   config.Options
 }
 
-func rebuildImpl(args rebuildArgs, oldHashes map[string]string) (rebuildState, map[string]string) {
+func rebuildImpl(args rebuildArgs, oldSummary buildSummary) rebuildState {
 	log := logger.NewStderrLog(args.logOptions)
 
 	// All validation warnings are repeated for every rebuild
@@ -1458,7 +1489,7 @@ func rebuildImpl(args rebuildArgs, oldHashes map[string]string) (rebuildState, m
 
 	// The new build summary remains the same as the old one when there are
 	// errors. A failed build shouldn't erase the previous successful build.
-	newHashes := oldHashes
+	newSummary := oldSummary
 
 	// Stop now if there were errors
 	if !log.HasErrors() {
@@ -1476,24 +1507,17 @@ func rebuildImpl(args rebuildArgs, oldHashes map[string]string) (rebuildState, m
 			result.Metafile = metafile
 
 			// Populate the results to return
-			var hashBytes [8]byte
 			result.OutputFiles = make([]OutputFile, len(results))
-			newHashes = make(map[string]string)
 			for i, item := range results {
 				if args.options.WriteToStdout {
 					item.AbsPath = "<stdout>"
 				}
-				hasher := xxhash.New()
-				hasher.Write(item.Contents)
-				binary.LittleEndian.PutUint64(hashBytes[:], hasher.Sum64())
-				hash := base64.RawStdEncoding.EncodeToString(hashBytes[:])
 				result.OutputFiles[i] = OutputFile{
 					Path:     item.AbsPath,
 					Contents: item.Contents,
-					Hash:     hash,
 				}
-				newHashes[item.AbsPath] = hash
 			}
+			newSummary = summarizeOutputFiles(result.OutputFiles)
 
 			// Write output files before "OnEnd" callbacks run so they can expect
 			// output files to exist on the file system. "OnEnd" callbacks can be
@@ -1512,8 +1536,8 @@ func rebuildImpl(args rebuildArgs, oldHashes map[string]string) (rebuildState, m
 				} else {
 					// Delete old files that are no longer relevant
 					var toDelete []string
-					for absPath := range oldHashes {
-						if _, ok := newHashes[absPath]; !ok {
+					for absPath := range oldSummary {
+						if _, ok := newSummary[absPath]; !ok {
 							toDelete = append(toDelete, absPath)
 						}
 					}
@@ -1526,7 +1550,7 @@ func rebuildImpl(args rebuildArgs, oldHashes map[string]string) (rebuildState, m
 							defer waitGroup.Done()
 							fs.BeforeFileOpen()
 							defer fs.AfterFileClose()
-							if oldHash, ok := oldHashes[result.AbsPath]; ok && oldHash == newHashes[result.AbsPath] {
+							if oldHash, ok := oldSummary[result.AbsPath]; ok && oldHash == newSummary[result.AbsPath] {
 								if contents, err := ioutil.ReadFile(result.AbsPath); err == nil && bytes.Equal(contents, result.Contents) {
 									// Skip writing out files that haven't changed since last time
 									return
@@ -1536,9 +1560,9 @@ func rebuildImpl(args rebuildArgs, oldHashes map[string]string) (rebuildState, m
 								log.AddError(nil, logger.Range{}, fmt.Sprintf(
 									"Failed to create output directory: %s", err.Error()))
 							} else {
-								var mode os.FileMode = 0666
+								var mode os.FileMode = 0644
 								if result.IsExecutable {
-									mode = 0777
+									mode = 0755
 								}
 								if err := ioutil.WriteFile(result.AbsPath, result.Contents, mode); err != nil {
 									log.AddError(nil, logger.Range{}, fmt.Sprintf(
@@ -1633,9 +1657,10 @@ func rebuildImpl(args rebuildArgs, oldHashes map[string]string) (rebuildState, m
 
 	return rebuildState{
 		result:    result,
+		summary:   newSummary,
 		options:   args.options,
 		watchData: watchData,
-	}, newHashes
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1660,13 +1685,12 @@ func transformImpl(input string, transformOpts TransformOptions) TransformResult
 	}
 
 	// Convert and validate the transformOpts
-	jsFeatures, cssFeatures, cssPrefixData, targetEnv := validateFeatures(log, transformOpts.Target, transformOpts.Engines)
+	jsFeatures, cssFeatures, targetEnv := validateFeatures(log, transformOpts.Target, transformOpts.Engines)
 	jsOverrides, jsMask, cssOverrides, cssMask := validateSupported(log, transformOpts.Supported)
 	platform := validatePlatform(transformOpts.Platform)
 	defines, injectedDefines := validateDefines(log, transformOpts.Define, transformOpts.Pure, platform, false /* isBuildAPI */, false /* minify */, transformOpts.Drop)
 	mangleCache := cloneMangleCache(log, transformOpts.MangleCache)
 	options := config.Options{
-		CSSPrefixData:                      cssPrefixData,
 		UnsupportedJSFeatures:              jsFeatures.ApplyOverrides(jsOverrides, jsMask),
 		UnsupportedCSSFeatures:             cssFeatures.ApplyOverrides(cssOverrides, cssMask),
 		UnsupportedJSFeatureOverrides:      jsOverrides,
@@ -1696,11 +1720,9 @@ func transformImpl(input string, transformOpts TransformOptions) TransformResult
 		MinifySyntax:          transformOpts.MinifySyntax,
 		MinifyWhitespace:      transformOpts.MinifyWhitespace,
 		MinifyIdentifiers:     transformOpts.MinifyIdentifiers,
-		LineLimit:             transformOpts.LineLimit,
 		MangleProps:           validateRegex(log, "mangle props", transformOpts.MangleProps),
 		ReserveProps:          validateRegex(log, "reserve props", transformOpts.ReserveProps),
 		MangleQuoted:          transformOpts.MangleQuoted == MangleQuotedTrue,
-		DropLabels:            append([]string{}, transformOpts.DropLabels...),
 		DropDebugger:          (transformOpts.Drop & DropDebugger) != 0,
 		ASCIIOnly:             validateASCIIOnly(transformOpts.Charset),
 		IgnoreDCEAnnotations:  transformOpts.IgnoreAnnotations,
@@ -1713,8 +1735,7 @@ func transformImpl(input string, transformOpts TransformOptions) TransformResult
 			SourceFile: transformOpts.Sourcefile,
 		},
 	}
-	validateKeepNames(log, &options)
-	if options.Stdin.Loader.IsCSS() {
+	if options.Stdin.Loader == config.LoaderCSS {
 		options.CSSBanner = transformOpts.Banner
 		options.CSSFooter = transformOpts.Footer
 	} else {
@@ -1843,10 +1864,8 @@ func importKindToResolveKind(kind ast.ImportKind) ResolveKind {
 		return ResolveJSDynamicImport
 	case ast.ImportRequireResolve:
 		return ResolveJSRequireResolve
-	case ast.ImportAt:
+	case ast.ImportAt, ast.ImportAtConditional:
 		return ResolveCSSImportRule
-	case ast.ImportComposesFrom:
-		return ResolveCSSComposesFrom
 	case ast.ImportURL:
 		return ResolveCSSURLToken
 	default:
@@ -1868,8 +1887,6 @@ func resolveKindToImportKind(kind ResolveKind) ast.ImportKind {
 		return ast.ImportRequireResolve
 	case ResolveCSSImportRule:
 		return ast.ImportAt
-	case ResolveCSSComposesFrom:
-		return ast.ImportComposesFrom
 	case ResolveCSSURLToken:
 		return ast.ImportURL
 	default:
@@ -1938,16 +1955,11 @@ func (impl *pluginImpl) onLoad(options OnLoadOptions, callback func(OnLoadArgs) 
 		Filter:    filter,
 		Namespace: options.Namespace,
 		Callback: func(args config.OnLoadArgs) (result config.OnLoadResult) {
-			with := make(map[string]string)
-			for _, attr := range args.Path.ImportAttributes.Decode() {
-				with[attr.Key] = attr.Value
-			}
 			response, err := callback(OnLoadArgs{
 				Path:       args.Path.Text,
 				Namespace:  args.Path.Namespace,
 				PluginData: args.PluginData,
 				Suffix:     args.Path.IgnoredSuffix,
-				With:       with,
 			})
 			result.PluginName = response.PluginName
 			result.AbsWatchFiles = impl.validatePathsArray(response.WatchFiles, "watch file")
@@ -2063,7 +2075,7 @@ func loadPlugins(initialOptions *BuildOptions, fs fs.FS, log logger.Log, caches 
 			result.Warnings = convertMessagesToPublic(logger.Warning, msgs)
 			if resolveResult != nil {
 				result.Path = resolveResult.PathPair.Primary.Text
-				result.External = resolveResult.PathPair.IsExternal
+				result.External = resolveResult.IsExternal
 				result.SideEffects = resolveResult.PrimarySideEffectsData == nil
 				result.Namespace = resolveResult.PathPair.Primary.Namespace
 				result.Suffix = resolveResult.PathPair.Primary.IgnoredSuffix
@@ -2444,6 +2456,21 @@ func analyzeMetafileImpl(metafile string, opts AnalyzeMetafileOptions) string {
 	}
 
 	return ""
+}
+
+type buildSummary map[string]uint64
+
+// This saves just enough information to be able to compute a useful diff
+// between two sets of output files. That way we don't need to hold both
+// sets of output files in memory at once to compute a diff.
+func summarizeOutputFiles(outputFiles []OutputFile) buildSummary {
+	summary := make(map[string]uint64)
+	for _, outputFile := range outputFiles {
+		hash := xxhash.New()
+		hash.Write(outputFile.Contents)
+		summary[outputFile.Path] = hash.Sum64()
+	}
+	return summary
 }
 
 func stripDirPrefix(path string, prefix string, allowedSlashes string) (string, bool) {

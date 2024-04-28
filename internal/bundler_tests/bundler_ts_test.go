@@ -423,47 +423,6 @@ func TestTSExportNamespace(t *testing.T) {
 	})
 }
 
-func TestTSNamespaceKeepNames(t *testing.T) {
-	ts_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.ts": `
-				namespace ns {
-					export let foo = () => {}
-					export function bar() {}
-					export class Baz {}
-				}
-			`,
-		},
-		entryPaths: []string{"/entry.ts"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/out.js",
-			KeepNames:     true,
-		},
-	})
-}
-
-func TestTSNamespaceKeepNamesTargetES2015(t *testing.T) {
-	ts_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.ts": `
-				namespace ns {
-					export let foo = () => {}
-					export function bar() {}
-					export class Baz {}
-				}
-			`,
-		},
-		entryPaths: []string{"/entry.ts"},
-		options: config.Options{
-			Mode:                  config.ModeBundle,
-			AbsOutputFile:         "/out.js",
-			KeepNames:             true,
-			UnsupportedJSFeatures: es(2015),
-		},
-	})
-}
-
 func TestTSMinifyEnum(t *testing.T) {
 	ts_suite.expectBundled(t, bundled{
 		files: map[string]string{
@@ -733,37 +692,6 @@ func TestTSMinifyEnumPropertyNames(t *testing.T) {
 		},
 	})
 }
-func TestTSMinifyEnumCrossFileInlineStringsIntoTemplates(t *testing.T) {
-	ts_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.ts": `
-				import { CrossFile } from './cross-file'
-				enum SameFile {
-					STR = 'str 1',
-					NUM = 123,
-				}
-				console.log(` + "`" + `
-					SameFile.STR = ${SameFile.STR}
-					SameFile.NUM = ${SameFile.NUM}
-					CrossFile.STR = ${CrossFile.STR}
-					CrossFile.NUM = ${CrossFile.NUM}
-				` + "`" + `)
-			`,
-			"/cross-file.ts": `
-				export enum CrossFile {
-					STR = 'str 2',
-					NUM = 321,
-				}
-			`,
-		},
-		entryPaths: []string{"/entry.ts"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			MinifySyntax:  true,
-			AbsOutputFile: "/out.js",
-		},
-	})
-}
 
 func TestTSImportVsLocalCollisionAllTypes(t *testing.T) {
 	ts_suite.expectBundled(t, bundled{
@@ -898,36 +826,6 @@ func TestTSImportEqualsBundle(t *testing.T) {
 	})
 }
 
-func TestTSImportEqualsUndefinedImport(t *testing.T) {
-	ts_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.ts": `
-				import * as ns from './import.ts'
-				import value_copy = ns.value
-				import Type_copy = ns.Type
-				let foo: Type_copy = value_copy
-				console.log(foo)
-			`,
-			"/import.ts": `
-				export let value = 123
-				export type Type = number
-			`,
-		},
-		entryPaths: []string{"/entry.ts"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/out.js",
-			ExternalSettings: config.ExternalSettings{
-				PreResolve: config.ExternalMatchers{
-					Exact: map[string]bool{
-						"pkg": true,
-					},
-				},
-			},
-		},
-	})
-}
-
 func TestTSMinifiedBundleES6(t *testing.T) {
 	ts_suite.expectBundled(t, bundled{
 		files: map[string]string{
@@ -985,17 +883,19 @@ func TestTSExperimentalDecoratorsNoConfig(t *testing.T) {
 			"/entry.ts": `
 				declare let x: any, y: any
 				@x.y()
-				@(new y.x)
+				@new y.x()
 				export default class Foo {
 					@x @y mUndef: any
 					@x @y mDef = 1
 					@x @y method() { return new Foo }
+					@x @y declare mDecl: any
 					@x @y accessor aUndef: any
 					@x @y accessor aDef = 1
 
 					@x @y static sUndef: any
 					@x @y static sDef = new Foo
 					@x @y static sMethod() { return new Foo }
+					@x @y static declare sDecl: any
 					@x @y static accessor asUndef: any
 					@x @y static accessor asDef = 1
 
@@ -1054,7 +954,6 @@ func TestTSExperimentalDecorators(t *testing.T) {
 					@x @y mDef = 1
 					@x @y method(@x0 @y0 arg0, @x1 @y1 arg1) { return new Foo }
 					@x @y declare mDecl
-					@x @y abstract mAbst
 					constructor(@x0 @y0 arg0, @x1 @y1 arg1) {}
 
 					@x @y static sUndef
@@ -1071,7 +970,6 @@ func TestTSExperimentalDecorators(t *testing.T) {
 					@x @y [mDef()] = 1
 					@x @y [method()](@x0 @y0 arg0, @x1 @y1 arg1) { return new Foo }
 					@x @y declare [mDecl()]
-					@x @y abstract [mAbst()]
 
 					// Side effect order must be preserved even for fields without decorators
 					[xUndef()]
@@ -1388,14 +1286,6 @@ func TestTSImplicitExtensions(t *testing.T) {
 				import './pick-tsx.jsx'
 				import './order-js.js'
 				import './order-jsx.jsx'
-
-				import 'pkg/foo-js.js'
-				import 'pkg/foo-jsx.jsx'
-				import 'pkg-exports/xyz-js'
-				import 'pkg-exports/xyz-jsx'
-				import 'pkg-exports/foo-js.js'
-				import 'pkg-exports/foo-jsx.jsx'
-				import 'pkg-imports'
 			`,
 
 			"/pick-js.js": `console.log("correct")`,
@@ -1415,39 +1305,6 @@ func TestTSImplicitExtensions(t *testing.T) {
 
 			"/order-jsx.ts":  `console.log("correct")`,
 			"/order-jsx.tsx": `console.log("wrong")`,
-
-			"/node_modules/pkg/foo-js.ts":   `console.log("correct")`,
-			"/node_modules/pkg/foo-jsx.tsx": `console.log("correct")`,
-
-			"/node_modules/pkg-exports/package.json": `{
-				"exports": {
-					"./xyz-js": "./abc-js.js",
-					"./xyz-jsx": "./abc-jsx.jsx",
-					"./*": "./lib/*"
-				}
-			}`,
-			"/node_modules/pkg-exports/abc-js.ts":       `console.log("correct")`,
-			"/node_modules/pkg-exports/abc-jsx.tsx":     `console.log("correct")`,
-			"/node_modules/pkg-exports/lib/foo-js.ts":   `console.log("correct")`,
-			"/node_modules/pkg-exports/lib/foo-jsx.tsx": `console.log("correct")`,
-
-			"/node_modules/pkg-imports/package.json": `{
-				"imports": {
-					"#xyz-js": "./abc-js.js",
-					"#xyz-jsx": "./abc-jsx.jsx",
-					"#bar/*": "./lib/*"
-				}
-			}`,
-			"/node_modules/pkg-imports/index.js": `
-				import "#xyz-js"
-				import "#xyz-jsx"
-				import "#bar/foo-js.js"
-				import "#bar/foo-jsx.jsx"
-			`,
-			"/node_modules/pkg-imports/abc-js.ts":       `console.log("correct")`,
-			"/node_modules/pkg-imports/abc-jsx.tsx":     `console.log("correct")`,
-			"/node_modules/pkg-imports/lib/foo-js.ts":   `console.log("correct")`,
-			"/node_modules/pkg-imports/lib/foo-jsx.tsx": `console.log("correct")`,
 		},
 		entryPaths: []string{"/entry.ts"},
 		options: config.Options{
@@ -2155,35 +2012,18 @@ func TestTSEnumSameModuleInliningAccess(t *testing.T) {
 	ts_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/entry.ts": `
-				enum a_num { x = 123 }
-				enum b_num { x = 123 }
-				enum c_num { x = 123 }
-				enum d_num { x = 123 }
-				enum e_num { x = 123 }
-
-				enum a_str { x = 'abc' }
-				enum b_str { x = 'abc' }
-				enum c_str { x = 'abc' }
-				enum d_str { x = 'abc' }
-				enum e_str { x = 'abc' }
-
-				inlined = [
-					a_num.x,
-					b_num['x'],
-
-					a_str.x,
-					b_str['x'],
-				]
-
-				not_inlined = [
-					c_num?.x,
-					d_num?.['x'],
-					e_num,
-
-					c_str?.x,
-					d_str?.['x'],
-					e_str,
-				]
+				enum a { x = 123 }
+				enum b { x = 123 }
+				enum c { x = 123 }
+				enum d { x = 123 }
+				enum e { x = 123 }
+				console.log([
+					a.x,
+					b['x'],
+					c?.x,
+					d?.['x'],
+					e,
+				])
 			`,
 		},
 		entryPaths: []string{"/entry.ts"},
@@ -2198,41 +2038,21 @@ func TestTSEnumCrossModuleInliningAccess(t *testing.T) {
 	ts_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/entry.ts": `
-				import {
-					a_num, b_num, c_num, d_num, e_num,
-					a_str, b_str, c_str, d_str, e_str,
-				} from './enums'
-
-				inlined = [
-					a_num.x,
-					b_num['x'],
-
-					a_str.x,
-					b_str['x'],
-				]
-
-				not_inlined = [
-					c_num?.x,
-					d_num?.['x'],
-					e_num,
-
-					c_str?.x,
-					d_str?.['x'],
-					e_str,
-				]
+				import { a, b, c, d, e } from './enums'
+				console.log([
+					a.x,
+					b['x'],
+					c?.x,
+					d?.['x'],
+					e,
+				])
 			`,
 			"/enums.ts": `
-				export enum a_num { x = 123 }
-				export enum b_num { x = 123 }
-				export enum c_num { x = 123 }
-				export enum d_num { x = 123 }
-				export enum e_num { x = 123 }
-
-				export enum a_str { x = 'abc' }
-				export enum b_str { x = 'abc' }
-				export enum c_str { x = 'abc' }
-				export enum d_str { x = 'abc' }
-				export enum e_str { x = 'abc' }
+				export enum a { x = 123 }
+				export enum b { x = 123 }
+				export enum c { x = 123 }
+				export enum d { x = 123 }
+				export enum e { x = 123 }
 			`,
 		},
 		entryPaths: []string{"/entry.ts"},
@@ -2301,48 +2121,6 @@ func TestTSEnumCrossModuleInliningReExport(t *testing.T) {
 		options: config.Options{
 			Mode:         config.ModeBundle,
 			AbsOutputDir: "/out",
-		},
-	})
-}
-
-func TestTSEnumCrossModuleInliningMinifyIndexIntoDot(t *testing.T) {
-	ts_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.ts": `
-				const enum Foo {
-					foo1 = 'abc',
-					foo2 = 'a b c',
-				}
-				import { Bar } from './lib'
-				inlined = [
-					obj[Foo.foo1],
-					obj[Bar.bar1],
-					obj?.[Foo.foo1],
-					obj?.[Bar.bar1],
-					obj?.prop[Foo.foo1],
-					obj?.prop[Bar.bar1],
-				]
-				notInlined = [
-					obj[Foo.foo2],
-					obj[Bar.bar2],
-					obj?.[Foo.foo2],
-					obj?.[Bar.bar2],
-					obj?.prop[Foo.foo2],
-					obj?.prop[Bar.bar2],
-				]
-			`,
-			"/lib.ts": `
-				export const enum Bar {
-					bar1 = 'xyz',
-					bar2 = 'x y z',
-				}
-			`,
-		},
-		entryPaths: []string{"/entry.ts"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/out.js",
-			MinifySyntax:  true,
 		},
 	})
 }
@@ -2887,98 +2665,6 @@ func TestTSExperimentalDecoratorsManglePropsStaticMethods(t *testing.T) {
 			Mode:          config.ModeBundle,
 			AbsOutputFile: "/out.js",
 			MangleProps:   regexp.MustCompile("_$"),
-		},
-	})
-}
-
-func TestTSPrintNonFiniteNumberInsideWith(t *testing.T) {
-	ts_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.ts": `
-				// Use const enums to force inline values
-				const enum Foo {
-					NAN = 0 / 0,
-					POS_INF = 1 / 0,
-					NEG_INF = -1 / 0,
-				}
-
-				//! It's ok to use "NaN" and "Infinity" here
-				console.log(
-					Foo.NAN,
-					Foo.POS_INF,
-					Foo.NEG_INF,
-				)
-				checkPrecedence(
-					1 / Foo.NAN,
-					1 / Foo.POS_INF,
-					1 / Foo.NEG_INF,
-				)
-
-				//! We must not use "NaN" or "Infinity" inside "with"
-				with (x) {
-					console.log(
-						Foo.NAN,
-						Foo.POS_INF,
-						Foo.NEG_INF,
-					)
-					checkPrecedence(
-						1 / Foo.NAN,
-						1 / Foo.POS_INF,
-						1 / Foo.NEG_INF,
-					)
-				}
-			`,
-		},
-		entryPaths: []string{"/entry.ts"},
-		options: config.Options{
-			Mode:          config.ModePassThrough,
-			AbsOutputFile: "/out.js",
-		},
-	})
-}
-
-func TestTSImportInNodeModulesNameCollisionWithCSS(t *testing.T) {
-	ts_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.ts": `
-				import "pkg"
-			`,
-			"/node_modules/pkg/index.ts": `
-				import js_ts_css from "./js_ts_css"
-				import ts_css from "./ts_css"
-				import js_ts from "./js_ts"
-				js_ts_css()
-				ts_css()
-				js_ts()
-			`,
-			"/node_modules/pkg/js_ts_css.js": `
-				import './js_ts_css.css'
-				export default function() {}
-			`,
-			"/node_modules/pkg/js_ts_css.ts": `
-				TEST FAILED
-			`,
-			"/node_modules/pkg/js_ts_css.css": `
-				.js_ts_css {}
-			`,
-			"/node_modules/pkg/ts_css.ts": `
-				import './ts_css.css'
-				export default function() {}
-			`,
-			"/node_modules/pkg/ts_css.css": `
-				.ts_css {}
-			`,
-			"/node_modules/pkg/js_ts.js": `
-				export default function() {}
-			`,
-			"/node_modules/pkg/js_ts.ts": `
-				TEST FAILED
-			`,
-		},
-		entryPaths: []string{"/entry.ts"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/out.js",
 		},
 	})
 }

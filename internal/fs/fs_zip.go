@@ -112,7 +112,10 @@ func tryToReadZipArchive(zipPath string, archive *zipFile) {
 
 	// Build an index of all files in the archive
 	for _, file := range reader.File {
-		baseName := strings.TrimSuffix(file.Name, "/")
+		baseName := file.Name
+		if strings.HasSuffix(baseName, "/") {
+			baseName = baseName[:len(baseName)-1]
+		}
 		dirPath := ""
 		if slash := strings.LastIndexByte(baseName, '/'); slash != -1 {
 			dirPath = baseName[:slash]

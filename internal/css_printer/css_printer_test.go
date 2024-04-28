@@ -3,8 +3,6 @@ package css_printer
 import (
 	"testing"
 
-	"github.com/evanw/esbuild/internal/ast"
-	"github.com/evanw/esbuild/internal/config"
 	"github.com/evanw/esbuild/internal/css_parser"
 	"github.com/evanw/esbuild/internal/logger"
 	"github.com/evanw/esbuild/internal/test"
@@ -15,9 +13,9 @@ func expectPrintedCommon(t *testing.T, name string, contents string, expected st
 	t.Run(name, func(t *testing.T) {
 		t.Helper()
 		log := logger.NewDeferLog(logger.DeferLogNoVerboseOrDebug, nil)
-		tree := css_parser.Parse(log, test.SourceForTest(contents), css_parser.OptionsFromConfig(config.LoaderCSS, &config.Options{
+		tree := css_parser.Parse(log, test.SourceForTest(contents), css_parser.Options{
 			MinifyWhitespace: options.MinifyWhitespace,
-		}))
+		})
 		msgs := log.Done()
 		text := ""
 		for _, msg := range msgs {
@@ -26,9 +24,7 @@ func expectPrintedCommon(t *testing.T, name string, contents string, expected st
 			}
 		}
 		test.AssertEqualWithDiff(t, text, "")
-		symbols := ast.NewSymbolMap(1)
-		symbols.SymbolsForSource[0] = tree.Symbols
-		result := Print(tree, symbols, options)
+		result := Print(tree, options)
 		test.AssertEqualWithDiff(t, string(result.CSS), expected)
 	})
 }
@@ -57,7 +53,7 @@ func expectPrintedString(t *testing.T, stringValue string, expected string) {
 	t.Run(stringValue, func(t *testing.T) {
 		t.Helper()
 		p := printer{}
-		p.printQuoted(stringValue, 0)
+		p.printQuoted(stringValue)
 		test.AssertEqualWithDiff(t, string(p.css), expected)
 	})
 }
@@ -155,9 +151,9 @@ func TestBadQualifiedRules(t *testing.T) {
 	expectPrinted(t, ";", "; {\n}\n")
 	expectPrinted(t, "$bad: rule;", "$bad: rule; {\n}\n")
 	expectPrinted(t, "a {}; b {};", "a {\n}\n; b {\n}\n; {\n}\n")
-	expectPrinted(t, "a { div.major { color: blue } color: red }", "a {\n  div.major {\n    color: blue;\n  }\n  color: red;\n}\n")
-	expectPrinted(t, "a { div:hover { color: blue } color: red }", "a {\n  div:hover {\n    color: blue;\n  }\n  color: red;\n}\n")
-	expectPrinted(t, "a { div:hover { color: blue }; color: red }", "a {\n  div:hover {\n    color: blue;\n  }\n  color: red;\n}\n")
+	expectPrinted(t, "a { div.major { color: blue } color: red }", "a {\n  div.major { color: blue } color: red;\n}\n")
+	expectPrinted(t, "a { div:hover { color: blue } color: red }", "a {\n  div: hover { color: blue } color: red;\n}\n")
+	expectPrinted(t, "a { div:hover { color: blue }; color: red }", "a {\n  div: hover { color: blue };\n  color: red;\n}\n")
 
 	expectPrinted(t, "$bad{ color: red }", "$bad {\n  color: red;\n}\n")
 	expectPrinted(t, "$bad { color: red }", "$bad {\n  color: red;\n}\n")
@@ -276,19 +272,17 @@ func TestVerbatimWhitespace(t *testing.T) {
 	expectPrintedMinify(t, "* { --x:[y ]; }", "*{--x:[y ]}")
 	expectPrintedMinify(t, "* { --x:[ y]; }", "*{--x:[ y]}")
 
-	// Note: These cases now behave like qualified rules
-	expectPrinted(t, "* { --x:{y}; }", "* {\n  --x: {\n    y;\n  }\n}\n")
-	expectPrinted(t, "* { --x:{y} ; }", "* {\n  --x: {\n    y;\n  }\n}\n")
-	expectPrinted(t, "* { --x: {y}; }", "* {\n  --x: {\n    y;\n  }\n}\n")
-	expectPrinted(t, "* { --x:{y }; }", "* {\n  --x: {\n    y;\n  }\n}\n")
-	expectPrinted(t, "* { --x:{ y}; }", "* {\n  --x: {\n    y;\n  }\n}\n")
+	expectPrinted(t, "* { --x:{y}; }", "* {\n  --x:{y};\n}\n")
+	expectPrinted(t, "* { --x:{y} ; }", "* {\n  --x:{y} ;\n}\n")
+	expectPrinted(t, "* { --x: {y}; }", "* {\n  --x: {y};\n}\n")
+	expectPrinted(t, "* { --x:{y }; }", "* {\n  --x:{y };\n}\n")
+	expectPrinted(t, "* { --x:{ y}; }", "* {\n  --x:{ y};\n}\n")
 
-	// Note: These cases now behave like qualified rules
 	expectPrintedMinify(t, "* { --x:{y}; }", "*{--x:{y}}")
-	expectPrintedMinify(t, "* { --x:{y} ; }", "*{--x:{y}}")
-	expectPrintedMinify(t, "* { --x: {y}; }", "*{--x:{y}}")
-	expectPrintedMinify(t, "* { --x:{y }; }", "*{--x:{y}}")
-	expectPrintedMinify(t, "* { --x:{ y}; }", "*{--x:{y}}")
+	expectPrintedMinify(t, "* { --x:{y} ; }", "*{--x:{y} }")
+	expectPrintedMinify(t, "* { --x: {y}; }", "*{--x: {y}}")
+	expectPrintedMinify(t, "* { --x:{y }; }", "*{--x:{y }}")
+	expectPrintedMinify(t, "* { --x:{ y}; }", "*{--x:{ y}}")
 
 	expectPrintedMinify(t, "@supports ( --x : y , z ) { a { color: red; } }", "@supports ( --x : y , z ){a{color:red}}")
 	expectPrintedMinify(t, "@supports ( --x : ) { a { color: red; } }", "@supports ( --x : ){a{color:red}}")

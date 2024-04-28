@@ -250,12 +250,6 @@ function foo() {
   );
 }
 
----------- /out/issue-3125.js ----------
-function foo() {
-  const f = () => x, x = 0;
-  return f();
-}
-
 ================================================================================
 TestCrossModuleConstantFolding
 ---------- /out/enum-entry.js ----------
@@ -267,17 +261,17 @@ console.log([
   !6 /* b */,
   typeof 6 /* b */
 ], [
-  9,
-  -3,
+  3 /* a */ + 6 /* b */,
+  3 /* a */ - 6 /* b */,
   3 /* a */ * 6 /* b */,
   3 /* a */ / 6 /* b */,
   3 /* a */ % 6 /* b */,
   3 /* a */ ** 6 /* b */
 ], [
-  !0,
-  !1,
-  !0,
-  !1,
+  3 /* a */ < 6 /* b */,
+  3 /* a */ > 6 /* b */,
+  3 /* a */ <= 6 /* b */,
+  3 /* a */ >= 6 /* b */,
   3 /* a */ == 6 /* b */,
   3 /* a */ != 6 /* b */,
   3 /* a */ === 6 /* b */,
@@ -305,17 +299,17 @@ console.log([
   !6,
   typeof 6
 ], [
-  9,
-  -3,
+  3 + 6,
+  3 - 6,
   3 * 6,
   3 / 6,
   3 % 6,
   3 ** 6
 ], [
-  !0,
-  !1,
-  !0,
-  !1,
+  3 < 6,
+  3 > 6,
+  3 <= 6,
+  3 >= 6,
   3 == 6,
   3 != 6,
   3 === 6,
@@ -401,135 +395,13 @@ var A_keep = class {
 };
 
 ================================================================================
-TestDCEOfDecorators
----------- /out/keep-these.js ----------
-// decorator.js
-var fn = () => {
-  console.log("side effect");
-};
-
-// keep-these.js
-var Class = @fn class {
-};
-var Field = class {
-  @fn field;
-};
-var Method = class {
-  @fn method() {
-  }
-};
-var Accessor = class {
-  @fn accessor accessor;
-};
-var StaticField = class {
-  @fn static field;
-};
-var StaticMethod = class {
-  @fn static method() {
-  }
-};
-var StaticAccessor = class {
-  @fn static accessor accessor;
-};
-
-================================================================================
-TestDCEOfDestructuring
----------- /out/entry.js ----------
-// entry.js
-var KEEP1 = x;
-var [KEEP2] = [x];
-var [KEEP3] = [...{}];
-var { KEEP4 } = {};
-
-================================================================================
-TestDCEOfExperimentalDecorators
----------- /out/keep-these.js ----------
-// decorator.ts
-var fn = () => {
-  console.log("side effect");
-};
-
-// keep-these.ts
-var Class = class {
-};
-Class = __decorateClass([
-  fn
-], Class);
-var Field = class {
-  field;
-};
-__decorateClass([
-  fn
-], Field.prototype, "field", 2);
-var Method = class {
-  method() {
-  }
-};
-__decorateClass([
-  fn
-], Method.prototype, "method", 1);
-var Accessor = class {
-  accessor accessor;
-};
-__decorateClass([
-  fn
-], Accessor.prototype, "accessor", 1);
-var Parameter = class {
-  foo(bar) {
-  }
-};
-__decorateClass([
-  __decorateParam(0, fn)
-], Parameter.prototype, "foo", 1);
-var StaticField = class {
-  static field;
-};
-__decorateClass([
-  fn
-], StaticField, "field", 2);
-var StaticMethod = class {
-  static method() {
-  }
-};
-__decorateClass([
-  fn
-], StaticMethod, "method", 1);
-var StaticAccessor = class {
-  static accessor accessor;
-};
-__decorateClass([
-  fn
-], StaticAccessor, "accessor", 1);
-var StaticParameter = class {
-  static foo(bar) {
-  }
-};
-__decorateClass([
-  __decorateParam(0, fn)
-], StaticParameter, "foo", 1);
-
-================================================================================
-TestDCEOfExprAfterKeepNamesIssue3195
----------- /out.js ----------
-(() => {
-  function f() {
-  }
-  __name(f, "f"), firstImportantSideEffect(void 0);
-})(), (() => {
-  function g() {
-  }
-  __name(g, "g");
-  debugger;
-  secondImportantSideEffect(void 0);
-})();
-
-================================================================================
 TestDCEOfIIFE
 ---------- /out/remove-these.js ----------
 keepThisButRemoveTheIIFE;
 
 ---------- /out/keep-these.js ----------
-undef = void 0;
+undef = /* @__PURE__ */ (() => {
+})();
 keepMe();
 ((x = keepMe()) => {
 })();
@@ -538,70 +410,6 @@ var someVar;
 })(someVar);
 (({ z }) => {
 })(someVar);
-var keepThis = stuff();
-keepThis();
-((_ = keepMe()) => {
-})();
-var isPure = /* @__PURE__ */ ((x, y) => 123)();
-use(isPure);
-var isNotPure = ((x = foo, y = bar) => 123)();
-use(isNotPure);
-(async () => ({ get then() {
-  notPure();
-} }))();
-(async function() {
-  return { get then() {
-    notPure();
-  } };
-})();
-
-================================================================================
-TestDCEOfSymbolInstances
----------- /out/class.js ----------
-// class.js
-var Keep1 = class {
-  *[Symbol.iterator]() {
-  }
-  [keep];
-};
-var Keep2 = class {
-  [keep];
-  *[Symbol.iterator]() {
-  }
-};
-var Keep3 = class {
-  *[Symbol.wtf]() {
-  }
-};
-
----------- /out/object.js ----------
-// object.js
-var keep1 = { *[Symbol.iterator]() {
-}, [keep]: null };
-var keep2 = { [keep]: null, *[Symbol.iterator]() {
-} };
-var keep3 = { *[Symbol.wtf]() {
-} };
-
-================================================================================
-TestDCEOfUsingDeclarations
----------- /out/entry.js ----------
-// entry.js
-using null_keep = null;
-await using await_null_keep = null;
-using throw_keep = {};
-using dispose_keep = { [Symbol.dispose]() {
-  console.log("side effect");
-} };
-await using await_asyncDispose_keep = { [Symbol.asyncDispose]() {
-  console.log("side effect");
-} };
-using undef_keep = void 0;
-await using await_undef_keep = void 0;
-console.log(
-  null_keep,
-  undef_keep
-);
 
 ================================================================================
 TestDCETemplateLiteral
@@ -824,7 +632,9 @@ function testStmts() {
     var f;
   if (!x)
     var g;
-  var h, i;
+  var h;
+  x:
+    var i;
 }
 testReturn();
 testThrow();
@@ -848,32 +658,6 @@ function keepMe3() {
 var keepMe4 = keepMe3();
 var keepMe5 = pure();
 var keepMe6 = some.fn();
-
-================================================================================
-TestDropLabelTreeShakingBugIssue3311
----------- /out.js ----------
-// entry.js
-var myFunc = () => {
-  console.log("keep");
-};
-var entry_default = myFunc;
-export {
-  entry_default as default
-};
-
-================================================================================
-TestDropLabels
----------- /out.js ----------
-// entry.js
-keep_1:
-  require("foo1");
-exports.bar = function() {
-  if (x)
-    ;
-  if (y)
-    keep_2:
-      require("bar2");
-};
 
 ================================================================================
 TestFileLoaderRemoveUnused
@@ -2418,19 +2202,6 @@ TestPureCallsWithSpread
 [...args];
 
 ================================================================================
-TestRemoveCodeAfterLabelWithReturn
----------- /out.js ----------
-function earlyReturn() {
-  onlyWithKeep();
-}
-function loop() {
-  if (foo()) {
-    bar();
-    return;
-  }
-}
-
-================================================================================
 TestRemoveTrailingReturn
 ---------- /out.js ----------
 // entry.js
@@ -2483,17 +2254,6 @@ eval("foo(a, b, c)");
 TestRemoveUnusedImportsEvalTS
 ---------- /out.js ----------
 eval("foo(a, b, c)");
-
-================================================================================
-TestRemoveUnusedNoSideEffectsTaggedTemplates
----------- /out.js ----------
-// entry.js
-// @__NO_SIDE_EFFECTS__
-function foo() {
-}
-use(foo`keep`);
-keep, alsoKeep;
-`${keep}${alsoKeep}`;
 
 ================================================================================
 TestRemoveUnusedPureCommentCalls
@@ -2739,14 +2499,14 @@ menu {
 TestTreeShakingJSWithAssociatedCSSExportStarSideEffectsFalse
 ---------- /out/test.js ----------
 // project/node_modules/pkg/button.css
-var require_button = __commonJS({
+var require_ = __commonJS({
   "project/node_modules/pkg/button.css"(exports, module) {
     module.exports = {};
   }
 });
 
 // project/node_modules/pkg/components.jsx
-require_button();
+require_();
 var Button = () => /* @__PURE__ */ React.createElement("button", null);
 
 // project/test.jsx
@@ -2762,14 +2522,14 @@ button {
 TestTreeShakingJSWithAssociatedCSSExportStarSideEffectsFalseOnlyJS
 ---------- /out/test.js ----------
 // project/node_modules/pkg/button.css
-var require_button = __commonJS({
+var require_ = __commonJS({
   "project/node_modules/pkg/button.css"(exports, module) {
     module.exports = {};
   }
 });
 
 // project/node_modules/pkg/components.jsx
-require_button();
+require_();
 var Button = () => /* @__PURE__ */ React.createElement("button", null);
 
 // project/test.jsx
@@ -2785,14 +2545,14 @@ button {
 TestTreeShakingJSWithAssociatedCSSReExportSideEffectsFalse
 ---------- /out/test.js ----------
 // project/node_modules/pkg/button.css
-var require_button = __commonJS({
+var require_ = __commonJS({
   "project/node_modules/pkg/button.css"(exports, module) {
     module.exports = {};
   }
 });
 
 // project/node_modules/pkg/components.jsx
-require_button();
+require_();
 var Button = () => /* @__PURE__ */ React.createElement("button", null);
 
 // project/test.jsx
@@ -2808,14 +2568,14 @@ button {
 TestTreeShakingJSWithAssociatedCSSReExportSideEffectsFalseOnlyJS
 ---------- /out/test.js ----------
 // project/node_modules/pkg/button.css
-var require_button = __commonJS({
+var require_ = __commonJS({
   "project/node_modules/pkg/button.css"(exports, module) {
     module.exports = {};
   }
 });
 
 // project/node_modules/pkg/components.jsx
-require_button();
+require_();
 var Button = () => /* @__PURE__ */ React.createElement("button", null);
 
 // project/test.jsx

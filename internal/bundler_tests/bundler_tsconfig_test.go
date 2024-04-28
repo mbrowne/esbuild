@@ -10,7 +10,7 @@ var tsconfig_suite = suite{
 	name: "tsconfig",
 }
 
-func TestTsconfigPaths(t *testing.T) {
+func TestTsConfigPaths(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.ts": `
@@ -183,7 +183,7 @@ func TestTsconfigPaths(t *testing.T) {
 	})
 }
 
-func TestTsconfigPathsNoBaseURL(t *testing.T) {
+func TestTsConfigPathsNoBaseURL(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.ts": `
@@ -323,7 +323,7 @@ func TestTsconfigPathsNoBaseURL(t *testing.T) {
 	})
 }
 
-func TestTsconfigBadPathsNoBaseURL(t *testing.T) {
+func TestTsConfigBadPathsNoBaseURL(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.ts": `
@@ -381,7 +381,7 @@ Users/user/project/tsconfig.json: WARNING: Non-relative path "http://bad" is not
 }
 
 // https://github.com/evanw/esbuild/issues/913
-func TestTsconfigPathsOverriddenBaseURL(t *testing.T) {
+func TestTsConfigPathsOverriddenBaseURL(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -417,7 +417,7 @@ func TestTsconfigPathsOverriddenBaseURL(t *testing.T) {
 	})
 }
 
-func TestTsconfigPathsOverriddenBaseURLDifferentDir(t *testing.T) {
+func TestTsConfigPathsOverriddenBaseURLDifferentDir(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -453,7 +453,7 @@ func TestTsconfigPathsOverriddenBaseURLDifferentDir(t *testing.T) {
 	})
 }
 
-func TestTsconfigPathsMissingBaseURL(t *testing.T) {
+func TestTsConfigPathsMissingBaseURL(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -486,12 +486,12 @@ func TestTsconfigPathsMissingBaseURL(t *testing.T) {
 			AbsOutputFile: "/Users/user/project/out.js",
 		},
 		expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Could not resolve "#/test"
-NOTE: You can mark the path "#/test" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+NOTE: You can mark the path "#/test" as external to exclude it from the bundle, which will remove this error.
 `,
 	})
 }
 
-func TestTsconfigPathsTypeOnly(t *testing.T) {
+func TestTsConfigPathsTypeOnly(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.ts": `
@@ -529,7 +529,7 @@ func TestTsconfigPathsTypeOnly(t *testing.T) {
 	})
 }
 
-func TestTsconfigJSX(t *testing.T) {
+func TestTsConfigJSX(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.tsx": `
@@ -552,7 +552,7 @@ func TestTsconfigJSX(t *testing.T) {
 	})
 }
 
-func TestTsconfigNestedJSX(t *testing.T) {
+func TestTsConfigNestedJSX(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.ts": `
@@ -601,7 +601,7 @@ func TestTsconfigNestedJSX(t *testing.T) {
 	})
 }
 
-func TestTsconfigPreserveJSX(t *testing.T) {
+func TestTsConfigPreserveJSX(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.tsx": `
@@ -623,7 +623,7 @@ func TestTsconfigPreserveJSX(t *testing.T) {
 	})
 }
 
-func TestTsconfigPreserveJSXAutomatic(t *testing.T) {
+func TestTsConfigPreserveJSXAutomatic(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.tsx": `
@@ -653,7 +653,7 @@ func TestTsconfigPreserveJSXAutomatic(t *testing.T) {
 	})
 }
 
-func TestTsconfigReactJSX(t *testing.T) {
+func TestTsConfigReactJSX(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.tsx": `
@@ -681,7 +681,7 @@ func TestTsconfigReactJSX(t *testing.T) {
 	})
 }
 
-func TestTsconfigReactJSXDev(t *testing.T) {
+func TestTsConfigReactJSXDev(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.tsx": `
@@ -708,7 +708,7 @@ func TestTsconfigReactJSXDev(t *testing.T) {
 	})
 }
 
-func TestTsconfigReactJSXWithDevInMainConfig(t *testing.T) {
+func TestTsConfigReactJSXWithDevInMainConfig(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/entry.tsx": `
@@ -1199,140 +1199,6 @@ func TestTsconfigJsonNodeModulesImplicitFile(t *testing.T) {
 	})
 }
 
-func TestTsconfigJsonNodeModulesTsconfigPathExact(t *testing.T) {
-	tsconfig_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/Users/user/project/src/app/entry.tsx": `
-				console.log(<div/>)
-			`,
-			"/Users/user/project/src/tsconfig.json": `
-				{
-					"extends": "foo"
-				}
-			`,
-			"/Users/user/project/src/node_modules/foo/package.json": `
-				{
-					"tsconfig": "over/here.json"
-				}
-			`,
-			"/Users/user/project/src/node_modules/foo/over/here.json": `
-				{
-					"compilerOptions": {
-						"jsx": "react",
-						"jsxFactory": "worked"
-					}
-				}
-			`,
-		},
-		entryPaths: []string{"/Users/user/project/src/app/entry.tsx"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/Users/user/project/out.js",
-		},
-	})
-}
-
-func TestTsconfigJsonNodeModulesTsconfigPathImplicitJson(t *testing.T) {
-	tsconfig_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/Users/user/project/src/app/entry.tsx": `
-				console.log(<div/>)
-			`,
-			"/Users/user/project/src/tsconfig.json": `
-				{
-					"extends": "foo"
-				}
-			`,
-			"/Users/user/project/src/node_modules/foo/package.json": `
-				{
-					"tsconfig": "over/here"
-				}
-			`,
-			"/Users/user/project/src/node_modules/foo/over/here.json": `
-				{
-					"compilerOptions": {
-						"jsx": "react",
-						"jsxFactory": "worked"
-					}
-				}
-			`,
-		},
-		entryPaths: []string{"/Users/user/project/src/app/entry.tsx"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/Users/user/project/out.js",
-		},
-	})
-}
-
-func TestTsconfigJsonNodeModulesTsconfigPathDirectory(t *testing.T) {
-	tsconfig_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/Users/user/project/src/app/entry.tsx": `
-				console.log(<div/>)
-			`,
-			"/Users/user/project/src/tsconfig.json": `
-				{
-					"extends": "foo"
-				}
-			`,
-			"/Users/user/project/src/node_modules/foo/package.json": `
-				{
-					"tsconfig": "over/here"
-				}
-			`,
-			"/Users/user/project/src/node_modules/foo/over/here/tsconfig.json": `
-				{
-					"compilerOptions": {
-						"jsx": "react",
-						"jsxFactory": "worked"
-					}
-				}
-			`,
-		},
-		entryPaths: []string{"/Users/user/project/src/app/entry.tsx"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/Users/user/project/out.js",
-		},
-	})
-}
-
-func TestTsconfigJsonNodeModulesTsconfigPathBad(t *testing.T) {
-	tsconfig_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/Users/user/project/src/app/entry.tsx": `
-				console.log(<div/>)
-			`,
-			"/Users/user/project/src/tsconfig.json": `
-				{
-					"extends": "foo"
-				}
-			`,
-			"/Users/user/project/src/node_modules/foo/package.json": `
-				{
-					"tsconfig": "over/here.json"
-				}
-			`,
-			"/Users/user/project/src/node_modules/foo/tsconfig.json": `
-				{
-					"compilerOptions": {
-						"jsx": "react",
-						"jsxFactory": "THIS SHOULD NOT BE LOADED"
-					}
-				}
-			`,
-		},
-		entryPaths: []string{"/Users/user/project/src/app/entry.tsx"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/Users/user/project/out.js",
-		},
-		expectedScanLog: `Users/user/project/src/tsconfig.json: WARNING: Cannot find base config file "foo"
-`,
-	})
-}
-
 func TestTsconfigJsonInsideNodeModules(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
@@ -1605,6 +1471,37 @@ func TestTsconfigUnrecognizedTargetWarning(t *testing.T) {
 	})
 }
 
+func TestTsconfigIgnoredTargetWarning(t *testing.T) {
+	tsconfig_suite.expectBundled(t, bundled{
+		files: map[string]string{
+			"/Users/user/project/src/entry.ts": `
+				import "./a"
+				import "b"
+			`,
+			"/Users/user/project/src/a/index.ts": ``,
+			"/Users/user/project/src/a/tsconfig.json": `{
+				"compilerOptions": {
+					"target": "es5"
+				}
+			}`,
+			"/Users/user/project/src/node_modules/b/index.ts": ``,
+			"/Users/user/project/src/node_modules/b/tsconfig.json": `{
+				"compilerOptions": {
+					"target": "es5"
+				}
+			}`,
+		},
+		entryPaths: []string{"/Users/user/project/src/entry.ts"},
+		options: config.Options{
+			Mode:          config.ModeBundle,
+			AbsOutputFile: "/Users/user/project/out.js",
+		},
+		expectedScanLog: `Users/user/project/src/a/tsconfig.json: WARNING: "tsconfig.json" does not affect esbuild's own target setting
+NOTE: This is because esbuild supports reading from multiple "tsconfig.json" files within a single build, and using different language targets for different files in the same build wouldn't be correct. If you want to set esbuild's language target, you should use esbuild's own global "target" setting such as with "Target: api.ES5".
+`,
+	})
+}
+
 func TestTsconfigIgnoredTargetSilent(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
@@ -1635,7 +1532,7 @@ func TestTsconfigIgnoredTargetSilent(t *testing.T) {
 	})
 }
 
-func TestTsconfigNoBaseURLExtendsPaths(t *testing.T) {
+func TestTsConfigNoBaseURLExtendsPaths(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -1663,12 +1560,12 @@ func TestTsconfigNoBaseURLExtendsPaths(t *testing.T) {
 		},
 		expectedScanLog: `Users/user/project/base/defaults.json: WARNING: Non-relative path "lib/*" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
 Users/user/project/src/entry.ts: ERROR: Could not resolve "foo"
-NOTE: You can mark the path "foo" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+NOTE: You can mark the path "foo" as external to exclude it from the bundle, which will remove this error.
 `,
 	})
 }
 
-func TestTsconfigBaseURLExtendsPaths(t *testing.T) {
+func TestTsConfigBaseURLExtendsPaths(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -1700,7 +1597,7 @@ func TestTsconfigBaseURLExtendsPaths(t *testing.T) {
 	})
 }
 
-func TestTsconfigPathsExtendsBaseURL(t *testing.T) {
+func TestTsConfigPathsExtendsBaseURL(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -1732,7 +1629,7 @@ func TestTsconfigPathsExtendsBaseURL(t *testing.T) {
 	})
 }
 
-func TestTsconfigPathsInNodeModulesIssue2386(t *testing.T) {
+func TestTsConfigPathsInNodeModulesIssue2386(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/main.js": `
@@ -1779,7 +1676,7 @@ func TestTsconfigPathsInNodeModulesIssue2386(t *testing.T) {
 	})
 }
 
-func TestTsconfigWithStatementAlwaysStrictFalse(t *testing.T) {
+func TestTsConfigWithStatementAlwaysStrictFalse(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -1800,7 +1697,7 @@ func TestTsconfigWithStatementAlwaysStrictFalse(t *testing.T) {
 	})
 }
 
-func TestTsconfigWithStatementAlwaysStrictTrue(t *testing.T) {
+func TestTsConfigWithStatementAlwaysStrictTrue(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -1823,7 +1720,7 @@ Users/user/project/tsconfig.json: NOTE: TypeScript's "alwaysStrict" setting was 
 	})
 }
 
-func TestTsconfigWithStatementStrictFalse(t *testing.T) {
+func TestTsConfigWithStatementStrictFalse(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -1844,7 +1741,7 @@ func TestTsconfigWithStatementStrictFalse(t *testing.T) {
 	})
 }
 
-func TestTsconfigWithStatementStrictTrue(t *testing.T) {
+func TestTsConfigWithStatementStrictTrue(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -1867,7 +1764,7 @@ Users/user/project/tsconfig.json: NOTE: TypeScript's "strict" setting was enable
 	})
 }
 
-func TestTsconfigWithStatementStrictFalseAlwaysStrictTrue(t *testing.T) {
+func TestTsConfigWithStatementStrictFalseAlwaysStrictTrue(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -1891,7 +1788,7 @@ Users/user/project/tsconfig.json: NOTE: TypeScript's "alwaysStrict" setting was 
 	})
 }
 
-func TestTsconfigWithStatementStrictTrueAlwaysStrictFalse(t *testing.T) {
+func TestTsConfigWithStatementStrictTrueAlwaysStrictFalse(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/entry.ts": `
@@ -1913,7 +1810,7 @@ func TestTsconfigWithStatementStrictTrueAlwaysStrictFalse(t *testing.T) {
 	})
 }
 
-func TestTsconfigAlwaysStrictTrueEmitDirectivePassThrough(t *testing.T) {
+func TestTsConfigAlwaysStrictTrueEmitDirectivePassThrough(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/implicit.ts": `
@@ -1940,7 +1837,7 @@ func TestTsconfigAlwaysStrictTrueEmitDirectivePassThrough(t *testing.T) {
 	})
 }
 
-func TestTsconfigAlwaysStrictTrueEmitDirectiveFormat(t *testing.T) {
+func TestTsConfigAlwaysStrictTrueEmitDirectiveFormat(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/implicit.ts": `
@@ -1967,7 +1864,7 @@ func TestTsconfigAlwaysStrictTrueEmitDirectiveFormat(t *testing.T) {
 	})
 }
 
-func TestTsconfigAlwaysStrictTrueEmitDirectiveBundleIIFE(t *testing.T) {
+func TestTsConfigAlwaysStrictTrueEmitDirectiveBundleIIFE(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/implicit.ts": `
@@ -1995,7 +1892,7 @@ func TestTsconfigAlwaysStrictTrueEmitDirectiveBundleIIFE(t *testing.T) {
 	})
 }
 
-func TestTsconfigAlwaysStrictTrueEmitDirectiveBundleCJS(t *testing.T) {
+func TestTsConfigAlwaysStrictTrueEmitDirectiveBundleCJS(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/implicit.ts": `
@@ -2023,7 +1920,7 @@ func TestTsconfigAlwaysStrictTrueEmitDirectiveBundleCJS(t *testing.T) {
 	})
 }
 
-func TestTsconfigAlwaysStrictTrueEmitDirectiveBundleESM(t *testing.T) {
+func TestTsConfigAlwaysStrictTrueEmitDirectiveBundleESM(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/implicit.ts": `
@@ -2051,7 +1948,7 @@ func TestTsconfigAlwaysStrictTrueEmitDirectiveBundleESM(t *testing.T) {
 	})
 }
 
-func TestTsconfigExtendsDotWithoutSlash(t *testing.T) {
+func TestTsConfigExtendsDotWithoutSlash(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.tsx": `
@@ -2076,7 +1973,7 @@ func TestTsconfigExtendsDotWithoutSlash(t *testing.T) {
 	})
 }
 
-func TestTsconfigExtendsDotDotWithoutSlash(t *testing.T) {
+func TestTsConfigExtendsDotDotWithoutSlash(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.tsx": `
@@ -2100,7 +1997,7 @@ func TestTsconfigExtendsDotDotWithoutSlash(t *testing.T) {
 	})
 }
 
-func TestTsconfigExtendsDotWithSlash(t *testing.T) {
+func TestTsConfigExtendsDotWithSlash(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.tsx": `
@@ -2127,7 +2024,7 @@ func TestTsconfigExtendsDotWithSlash(t *testing.T) {
 	})
 }
 
-func TestTsconfigExtendsDotDotWithSlash(t *testing.T) {
+func TestTsConfigExtendsDotDotWithSlash(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.tsx": `
@@ -2153,7 +2050,7 @@ func TestTsconfigExtendsDotDotWithSlash(t *testing.T) {
 	})
 }
 
-func TestTsconfigExtendsWithExports(t *testing.T) {
+func TestTsConfigExtendsWithExports(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.tsx": `
@@ -2182,7 +2079,7 @@ func TestTsconfigExtendsWithExports(t *testing.T) {
 	})
 }
 
-func TestTsconfigExtendsWithExportsStar(t *testing.T) {
+func TestTsConfigExtendsWithExportsStar(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.tsx": `
@@ -2211,7 +2108,7 @@ func TestTsconfigExtendsWithExportsStar(t *testing.T) {
 	})
 }
 
-func TestTsconfigExtendsWithExportsStarTrailing(t *testing.T) {
+func TestTsConfigExtendsWithExportsStarTrailing(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.tsx": `
@@ -2240,7 +2137,7 @@ func TestTsconfigExtendsWithExportsStarTrailing(t *testing.T) {
 	})
 }
 
-func TestTsconfigExtendsWithExportsRequire(t *testing.T) {
+func TestTsConfigExtendsWithExportsRequire(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.tsx": `
@@ -2275,7 +2172,7 @@ func TestTsconfigExtendsWithExportsRequire(t *testing.T) {
 	})
 }
 
-func TestTsconfigVerbatimModuleSyntaxTrue(t *testing.T) {
+func TestTsConfigVerbatimModuleSyntaxTrue(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.ts": `
@@ -2301,7 +2198,7 @@ func TestTsconfigVerbatimModuleSyntaxTrue(t *testing.T) {
 	})
 }
 
-func TestTsconfigVerbatimModuleSyntaxFalse(t *testing.T) {
+func TestTsConfigVerbatimModuleSyntaxFalse(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.ts": `
@@ -2327,7 +2224,7 @@ func TestTsconfigVerbatimModuleSyntaxFalse(t *testing.T) {
 	})
 }
 
-func TestTsconfigExtendsArray(t *testing.T) {
+func TestTsConfigExtendsArray(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.tsx": `
@@ -2360,7 +2257,7 @@ func TestTsconfigExtendsArray(t *testing.T) {
 	})
 }
 
-func TestTsconfigExtendsArrayNested(t *testing.T) {
+func TestTsConfigExtendsArrayNested(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.tsx": `
@@ -2414,7 +2311,7 @@ func TestTsconfigExtendsArrayNested(t *testing.T) {
 	})
 }
 
-func TestTsconfigIgnoreInsideNodeModules(t *testing.T) {
+func TestTsConfigIgnoreInsideNodeModules(t *testing.T) {
 	tsconfig_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/Users/user/project/src/main.ts": `
@@ -2454,203 +2351,6 @@ func TestTsconfigIgnoreInsideNodeModules(t *testing.T) {
 		options: config.Options{
 			Mode:         config.ModeBundle,
 			AbsOutputDir: "/Users/user/project/out",
-		},
-	})
-}
-
-func TestTsconfigJsonPackagesExternal(t *testing.T) {
-	tsconfig_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/Users/user/project/src/entry.js": `
-				import truePkg from 'pkg1'
-				import falsePkg from 'internal/pkg2'
-				truePkg()
-				falsePkg()
-			`,
-			"/Users/user/project/src/tsconfig.json": `
-				{
-					"compilerOptions": {
-						"paths": {
-							"internal/*": ["./stuff/*"]
-						}
-					}
-				}
-			`,
-			"/Users/user/project/src/stuff/pkg2.js": `
-				export default success
-			`,
-		},
-		entryPaths: []string{"/Users/user/project/src/entry.js"},
-		options: config.Options{
-			Mode:             config.ModeBundle,
-			AbsOutputFile:    "/Users/user/project/out.js",
-			ExternalPackages: true,
-		},
-	})
-}
-
-func TestTsconfigJsonTopLevelMistakeWarning(t *testing.T) {
-	tsconfig_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/Users/user/project/src/entry.ts": `
-				@foo
-				class Foo {}
-			`,
-			"/Users/user/project/src/tsconfig.json": `
-				{
-					"experimentalDecorators": true
-				}
-			`,
-		},
-		entryPaths: []string{"/Users/user/project/src/entry.ts"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/Users/user/project/out.js",
-		},
-		expectedScanLog: `Users/user/project/src/tsconfig.json: WARNING: Expected the "experimentalDecorators" option to be nested inside a "compilerOptions" object
-`,
-	})
-}
-
-// https://github.com/evanw/esbuild/issues/3307
-func TestTsconfigJsonBaseUrlIssue3307(t *testing.T) {
-	tsconfig_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/Users/user/project/src/tsconfig.json": `
-				{
-					"compilerOptions": {
-						"baseUrl": "./subdir"
-					}
-				}
-			`,
-			"/Users/user/project/src/test.ts": `
-				export const foo = "well, this is correct...";
-			`,
-			"/Users/user/project/src/subdir/test.ts": `
-				export const foo = "WRONG";
-			`,
-		},
-		entryPaths:    []string{"test.ts"},
-		absWorkingDir: "/Users/user/project/src",
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/Users/user/project/out.js",
-		},
-	})
-}
-
-// https://github.com/evanw/esbuild/issues/3354
-func TestTsconfigJsonAsteriskNameCollisionIssue3354(t *testing.T) {
-	tsconfig_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/Users/user/project/src/entry.ts": `
-				import {foo} from "foo";
-				foo();
-			`,
-			"/Users/user/project/src/tsconfig.json": `
-				{
-					"compilerOptions": {
-						"baseUrl": ".",
-						"paths": {
-							"*": ["web/*"]
-						}
-					}
-				}
-			`,
-			"/Users/user/project/src/web/foo.ts": `
-				import {foo as barFoo} from 'bar/foo';
-				export function foo() {
-					console.log('web/foo');
-					barFoo();
-				}
-			`,
-			"/Users/user/project/src/web/bar/foo/foo.ts": `
-				export function foo() {
-					console.log('bar/foo');
-				}
-			`,
-			"/Users/user/project/src/web/bar/foo/index.ts": `
-				export {foo} from './foo'
-			`,
-		},
-		entryPaths:    []string{"entry.ts"},
-		absWorkingDir: "/Users/user/project/src",
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/Users/user/project/out.js",
-		},
-	})
-}
-
-// https://github.com/evanw/esbuild/issues/3698
-func TestTsconfigPackageJsonExportsYarnPnP(t *testing.T) {
-	tsconfig_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/Users/user/project/packages/app/index.tsx": `
-				console.log(<div/>)
-			`,
-			"/Users/user/project/packages/app/tsconfig.json": `
-				{
-					"extends": "tsconfigs/config"
-				}
-			`,
-			"/Users/user/project/packages/tsconfigs/package.json": `
-				{
-					"exports": {
-						"./config": "./configs/tsconfig.json"
-					}
-				}
-			`,
-			"/Users/user/project/packages/tsconfigs/configs/tsconfig.json": `
-				{
-					"compilerOptions": {
-						"jsxFactory": "success"
-					}
-				}
-			`,
-			"/Users/user/project/.pnp.data.json": `
-				{
-					"packageRegistryData": [
-						[
-							"app",
-							[
-								[
-									"workspace:packages/app",
-									{
-										"packageLocation": "./packages/app/",
-										"packageDependencies": [
-											[
-												"tsconfigs",
-												"workspace:packages/tsconfigs"
-											]
-										],
-										"linkType": "SOFT"
-									}
-								]
-							]
-						],
-						[
-							"tsconfigs",
-							[
-								[
-									"workspace:packages/tsconfigs",
-									{
-										"packageLocation": "./packages/tsconfigs/",
-										"packageDependencies": [],
-										"linkType": "SOFT"
-									}
-								]
-							]
-						]
-					]
-				}
-			`,
-		},
-		entryPaths:    []string{"/Users/user/project/packages/app/index.tsx"},
-		absWorkingDir: "/Users/user/project",
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/Users/user/project/out.js",
 		},
 	})
 }

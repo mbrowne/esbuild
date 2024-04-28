@@ -7,13 +7,36 @@ package js_parser
 import (
 	"fmt"
 
-	"github.com/evanw/esbuild/internal/ast"
 	"github.com/evanw/esbuild/internal/compat"
 	"github.com/evanw/esbuild/internal/config"
 	"github.com/evanw/esbuild/internal/helpers"
 	"github.com/evanw/esbuild/internal/js_ast"
 	"github.com/evanw/esbuild/internal/logger"
 )
+
+func (p *parser) prettyPrintTargetEnvironment(feature compat.JSFeature) (where string, notes []logger.MsgData) {
+	where = "the configured target environment"
+	overrides := ""
+	if p.options.unsupportedJSFeatureOverridesMask != 0 {
+		count := 0
+		mask := p.options.unsupportedJSFeatureOverridesMask
+		for mask != 0 {
+			if (mask & 1) != 0 {
+				count++
+			}
+			mask >>= 1
+		}
+		s := "s"
+		if count == 1 {
+			s = ""
+		}
+		overrides = fmt.Sprintf(" + %d override%s", count, s)
+	}
+	if p.options.originalTargetEnv != "" {
+		where = fmt.Sprintf("%s (%s%s)", where, p.options.originalTargetEnv, overrides)
+	}
+	return
+}
 
 func (p *parser) markSyntaxFeature(feature compat.JSFeature, r logger.Range) (didGenerateError bool) {
 	didGenerateError = true
@@ -30,7 +53,7 @@ func (p *parser) markSyntaxFeature(feature compat.JSFeature, r logger.Range) (di
 	}
 
 	var name string
-	where := config.PrettyPrintTargetEnvironment(p.options.originalTargetEnv, p.options.unsupportedJSFeatureOverridesMask)
+	where, notes := p.prettyPrintTargetEnvironment(feature)
 
 	switch feature {
 	case compat.DefaultArgument:
@@ -81,25 +104,25 @@ func (p *parser) markSyntaxFeature(feature compat.JSFeature, r logger.Range) (di
 	case compat.Decorators:
 		name = "JavaScript decorators"
 
-	case compat.ImportAttributes:
-		p.log.AddError(&p.tracker, r, fmt.Sprintf(
-			"Using an arbitrary value as the second argument to \"import()\" is not possible in %s", where))
+	case compat.ImportAssertions:
+		p.log.AddErrorWithNotes(&p.tracker, r, fmt.Sprintf(
+			"Using an arbitrary value as the second argument to \"import()\" is not possible in %s", where), notes)
 		return
 
 	case compat.TopLevelAwait:
-		p.log.AddError(&p.tracker, r, fmt.Sprintf(
-			"Top-level await is not available in %s", where))
+		p.log.AddErrorWithNotes(&p.tracker, r, fmt.Sprintf(
+			"Top-level await is not available in %s", where), notes)
 		return
 
 	case compat.ArbitraryModuleNamespaceNames:
-		p.log.AddError(&p.tracker, r, fmt.Sprintf(
-			"Using a string as a module namespace identifier name is not supported in %s", where))
+		p.log.AddErrorWithNotes(&p.tracker, r, fmt.Sprintf(
+			"Using a string as a module namespace identifier name is not supported in %s", where), notes)
 		return
 
 	case compat.Bigint:
 		// Transforming these will never be supported
-		p.log.AddError(&p.tracker, r, fmt.Sprintf(
-			"Big integer literals are not available in %s", where))
+		p.log.AddErrorWithNotes(&p.tracker, r, fmt.Sprintf(
+			"Big integer literals are not available in %s", where), notes)
 		return
 
 	case compat.ImportMeta:
@@ -108,18 +131,18 @@ func (p *parser) markSyntaxFeature(feature compat.JSFeature, r logger.Range) (di
 		if p.suppressWarningsAboutWeirdCode || p.fnOrArrowDataVisit.tryBodyCount > 0 {
 			kind = logger.Debug
 		}
-		p.log.AddID(logger.MsgID_JS_EmptyImportMeta, kind, &p.tracker, r, fmt.Sprintf(
-			"\"import.meta\" is not available in %s and will be empty", where))
+		p.log.AddIDWithNotes(logger.MsgID_JS_EmptyImportMeta, kind, &p.tracker, r, fmt.Sprintf(
+			"\"import.meta\" is not available in %s and will be empty", where), notes)
 		return
 
 	default:
-		p.log.AddError(&p.tracker, r, fmt.Sprintf(
-			"This feature is not available in %s", where))
+		p.log.AddErrorWithNotes(&p.tracker, r, fmt.Sprintf(
+			"This feature is not available in %s", where), notes)
 		return
 	}
 
-	p.log.AddError(&p.tracker, r, fmt.Sprintf(
-		"Transforming %s to %s is not supported yet", name, where))
+	p.log.AddErrorWithNotes(&p.tracker, r, fmt.Sprintf(
+		"Transforming %s to %s is not supported yet", name, where), notes)
 	return
 }
 
@@ -230,6 +253,12 @@ func (p *parser) whyStrictMode(scope *js_ast.Scope) (where string, notes []logge
 }
 
 func (p *parser) markAsyncFn(asyncRange logger.Range, isGenerator bool) (didGenerateError bool) {
+	if isGenerator {
+		// Async generator functions cannot currently be lowered, so using them
+		// when they aren't supported is always an error
+		return p.markSyntaxFeature(compat.AsyncGenerator, asyncRange)
+	}
+
 	// Lowered async functions are implemented in terms of generators. So if
 	// generators aren't supported, async functions aren't supported either.
 	// But if generators are supported, then async functions are unconditionally
@@ -238,16 +267,12 @@ func (p *parser) markAsyncFn(asyncRange logger.Range, isGenerator bool) (didGene
 		return false
 	}
 
-	feature := compat.AsyncAwait
-	if isGenerator {
-		feature = compat.AsyncGenerator
-	}
-	return p.markSyntaxFeature(feature, asyncRange)
+	return p.markSyntaxFeature(compat.AsyncAwait, asyncRange)
 }
 
-func (p *parser) captureThis() ast.Ref {
+func (p *parser) captureThis() js_ast.Ref {
 	if p.fnOnlyDataVisit.thisCaptureRef == nil {
-		ref := p.newSymbol(ast.SymbolHoisted, "_this")
+		ref := p.newSymbol(js_ast.SymbolHoisted, "_this")
 		p.fnOnlyDataVisit.thisCaptureRef = &ref
 	}
 
@@ -256,9 +281,9 @@ func (p *parser) captureThis() ast.Ref {
 	return ref
 }
 
-func (p *parser) captureArguments() ast.Ref {
+func (p *parser) captureArguments() js_ast.Ref {
 	if p.fnOnlyDataVisit.argumentsCaptureRef == nil {
-		ref := p.newSymbol(ast.SymbolHoisted, "_arguments")
+		ref := p.newSymbol(js_ast.SymbolHoisted, "_arguments")
 		p.fnOnlyDataVisit.argumentsCaptureRef = &ref
 	}
 
@@ -269,7 +294,6 @@ func (p *parser) captureArguments() ast.Ref {
 
 func (p *parser) lowerFunction(
 	isAsync *bool,
-	isGenerator *bool,
 	args *[]js_ast.Arg,
 	bodyLoc logger.Loc,
 	bodyBlock *js_ast.SBlock,
@@ -334,8 +358,8 @@ func (p *parser) lowerFunction(
 		}
 	}
 
-	// Lower async functions and async generator functions
-	if *isAsync && (p.options.unsupportedJSFeatures.Has(compat.AsyncAwait) || (isGenerator != nil && *isGenerator && p.options.unsupportedJSFeatures.Has(compat.AsyncGenerator))) {
+	// Lower async functions
+	if p.options.unsupportedJSFeatures.Has(compat.AsyncAwait) && *isAsync {
 		// Use the shortened form if we're an arrow function
 		if preferExpr != nil {
 			*preferExpr = true
@@ -419,7 +443,7 @@ func (p *parser) lowerFunction(
 				}
 
 				// Generate a dummy variable
-				argRef := p.newSymbol(ast.SymbolOther, fmt.Sprintf("_%d", i))
+				argRef := p.newSymbol(js_ast.SymbolOther, fmt.Sprintf("_%d", i))
 				p.currentScope.Generated = append(p.currentScope.Generated, argRef)
 				*args = append(*args, js_ast.Arg{Binding: js_ast.Binding{Loc: arg.Binding.Loc, Data: &js_ast.BIdentifier{Ref: argRef}}})
 			}
@@ -444,7 +468,7 @@ func (p *parser) lowerFunction(
 				// add a rest argument to the set of forwarding variables. This is the
 				// case if the arrow function has rest or default arguments.
 				if len(*args) < len(fn.Args) {
-					argRef := p.newSymbol(ast.SymbolOther, fmt.Sprintf("_%d", len(*args)))
+					argRef := p.newSymbol(js_ast.SymbolOther, fmt.Sprintf("_%d", len(*args)))
 					p.currentScope.Generated = append(p.currentScope.Generated, argRef)
 					*args = append(*args, js_ast.Arg{Binding: js_ast.Binding{Loc: bodyLoc, Data: &js_ast.BIdentifier{Ref: argRef}}})
 					*hasRestArg = true
@@ -464,17 +488,9 @@ func (p *parser) lowerFunction(
 			}
 		}
 
-		var name string
-		if isGenerator != nil && *isGenerator {
-			// "async function* foo(a, b) { stmts }" => "function foo(a, b) { return __asyncGenerator(this, null, function* () { stmts }) }"
-			name = "__asyncGenerator"
-			*isGenerator = false
-		} else {
-			// "async function foo(a, b) { stmts }" => "function foo(a, b) { return __async(this, null, function* () { stmts }) }"
-			name = "__async"
-		}
+		// "async function foo(a, b) { stmts }" => "function foo(a, b) { return __async(this, null, function* () { stmts }) }"
 		*isAsync = false
-		callAsync := p.callRuntime(bodyLoc, name, []js_ast.Expr{
+		callAsync := p.callRuntime(bodyLoc, "__async", []js_ast.Expr{
 			thisValue,
 			forwardedArgs,
 			{Loc: bodyLoc, Data: &js_ast.EFunction{Fn: fn}},
@@ -547,7 +563,7 @@ flatten:
 	if p.options.minifySyntax {
 		if isNullOrUndefined, sideEffects, ok := js_ast.ToNullOrUndefinedWithSideEffects(expr.Data); ok && isNullOrUndefined {
 			if sideEffects == js_ast.CouldHaveSideEffects {
-				return js_ast.JoinWithComma(p.astHelpers.SimplifyUnusedExpr(expr, p.options.unsupportedJSFeatures), valueWhenUndefined), exprOut{}
+				return js_ast.JoinWithComma(js_ast.SimplifyUnusedExpr(expr, p.options.unsupportedJSFeatures, p.isUnbound), valueWhenUndefined), exprOut{}
 			}
 			return valueWhenUndefined, exprOut{}
 		}
@@ -1037,27 +1053,6 @@ func (p *parser) lowerObjectSpread(loc logger.Loc, e *js_ast.EObject) js_ast.Exp
 	return result
 }
 
-func (p *parser) maybeLowerAwait(loc logger.Loc, e *js_ast.EAwait) js_ast.Expr {
-	// "await x" turns into "yield __await(x)" when lowering async generator functions
-	if p.fnOrArrowDataVisit.isGenerator && (p.options.unsupportedJSFeatures.Has(compat.AsyncAwait) || p.options.unsupportedJSFeatures.Has(compat.AsyncGenerator)) {
-		return js_ast.Expr{Loc: loc, Data: &js_ast.EYield{
-			ValueOrNil: js_ast.Expr{Loc: loc, Data: &js_ast.ENew{
-				Target: p.importFromRuntime(loc, "__await"),
-				Args:   []js_ast.Expr{e.Value},
-			}},
-		}}
-	}
-
-	// "await x" turns into "yield x" when lowering async functions
-	if p.options.unsupportedJSFeatures.Has(compat.AsyncAwait) {
-		return js_ast.Expr{Loc: loc, Data: &js_ast.EYield{
-			ValueOrNil: e.Value,
-		}}
-	}
-
-	return js_ast.Expr{Loc: loc, Data: e}
-}
-
 func (p *parser) lowerForAwaitLoop(loc logger.Loc, loop *js_ast.SForOf, stmts []js_ast.Stmt) []js_ast.Stmt {
 	// This code:
 	//
@@ -1139,8 +1134,13 @@ func (p *parser) lowerForAwaitLoop(loc logger.Loc, loop *js_ast.SForOf, stmts []
 	}}
 
 	// "await" expressions turn into "yield" expressions when lowering
-	awaitIterNext = p.maybeLowerAwait(awaitIterNext.Loc, &js_ast.EAwait{Value: awaitIterNext})
-	awaitTempCallIter = p.maybeLowerAwait(awaitTempCallIter.Loc, &js_ast.EAwait{Value: awaitTempCallIter})
+	if p.options.unsupportedJSFeatures.Has(compat.AsyncAwait) {
+		awaitIterNext.Data = &js_ast.EYield{ValueOrNil: awaitIterNext}
+		awaitTempCallIter.Data = &js_ast.EYield{ValueOrNil: awaitTempCallIter}
+	} else {
+		awaitIterNext.Data = &js_ast.EAwait{Value: awaitIterNext}
+		awaitTempCallIter.Data = &js_ast.EAwait{Value: awaitTempCallIter}
+	}
 
 	return append(stmts, js_ast.Stmt{Loc: loc, Data: &js_ast.STry{
 		BlockLoc: loc,
@@ -1468,7 +1468,7 @@ func (p *parser) lowerObjectRestHelper(
 	// If there is at least one rest binding, lower the whole expression
 	var visit func(js_ast.Expr, js_ast.Expr, []func() js_ast.Expr)
 
-	captureIntoRef := func(expr js_ast.Expr) ast.Ref {
+	captureIntoRef := func(expr js_ast.Expr) js_ast.Ref {
 		ref := p.generateTempRef(declare, "")
 		assign(js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: ref}}, expr)
 		p.recordUsage(ref)
@@ -1866,274 +1866,4 @@ func (p *parser) maybeLowerSetBinOp(left js_ast.Expr, op js_ast.OpCode, right js
 		return p.lowerSuperPropertySetBinOp(left.Loc, property, op, right)
 	}
 	return js_ast.Expr{}
-}
-
-func (p *parser) shouldLowerUsingDeclarations(stmts []js_ast.Stmt) bool {
-	for _, stmt := range stmts {
-		if local, ok := stmt.Data.(*js_ast.SLocal); ok &&
-			((local.Kind == js_ast.LocalUsing && p.options.unsupportedJSFeatures.Has(compat.Using)) ||
-				(local.Kind == js_ast.LocalAwaitUsing && (p.options.unsupportedJSFeatures.Has(compat.Using) ||
-					p.options.unsupportedJSFeatures.Has(compat.AsyncAwait) ||
-					(p.options.unsupportedJSFeatures.Has(compat.AsyncGenerator) && p.fnOrArrowDataVisit.isGenerator)))) {
-			return true
-		}
-	}
-	return false
-}
-
-type lowerUsingDeclarationContext struct {
-	firstUsingLoc logger.Loc
-	stackRef      ast.Ref
-	hasAwaitUsing bool
-}
-
-func (p *parser) lowerUsingDeclarationContext() lowerUsingDeclarationContext {
-	return lowerUsingDeclarationContext{
-		stackRef: p.newSymbol(ast.SymbolOther, "_stack"),
-	}
-}
-
-// If this returns "nil", then no lowering needed to be done
-func (ctx *lowerUsingDeclarationContext) scanStmts(p *parser, stmts []js_ast.Stmt) {
-	for _, stmt := range stmts {
-		if local, ok := stmt.Data.(*js_ast.SLocal); ok && local.Kind.IsUsing() {
-			// Wrap each "using" initializer in a call to the "__using" helper function
-			if ctx.firstUsingLoc.Start == 0 {
-				ctx.firstUsingLoc = stmt.Loc
-			}
-			if local.Kind == js_ast.LocalAwaitUsing {
-				ctx.hasAwaitUsing = true
-			}
-			for i, decl := range local.Decls {
-				if decl.ValueOrNil.Data != nil {
-					valueLoc := decl.ValueOrNil.Loc
-					p.recordUsage(ctx.stackRef)
-					args := []js_ast.Expr{
-						{Loc: valueLoc, Data: &js_ast.EIdentifier{Ref: ctx.stackRef}},
-						decl.ValueOrNil,
-					}
-					if local.Kind == js_ast.LocalAwaitUsing {
-						args = append(args, js_ast.Expr{Loc: valueLoc, Data: &js_ast.EBoolean{Value: true}})
-					}
-					local.Decls[i].ValueOrNil = p.callRuntime(valueLoc, "__using", args)
-				}
-			}
-			if p.willWrapModuleInTryCatchForUsing && p.currentScope.Parent == nil {
-				local.Kind = js_ast.LocalVar
-			} else {
-				local.Kind = p.selectLocalKind(js_ast.LocalConst)
-			}
-		}
-	}
-}
-
-func (ctx *lowerUsingDeclarationContext) finalize(p *parser, stmts []js_ast.Stmt, shouldHoistFunctions bool) []js_ast.Stmt {
-	var result []js_ast.Stmt
-	var exports []js_ast.ClauseItem
-	end := 0
-
-	// Filter out statements that can't go in a try/catch block
-	for _, stmt := range stmts {
-		switch s := stmt.Data.(type) {
-		// Note: We don't need to handle class declarations here because they
-		// should have been already converted into local "var" declarations
-		// before this point. It's done in "lowerClass" instead of here because
-		// "lowerClass" already does this sometimes for other reasons, and it's
-		// more straightforward to do it in one place because it's complicated.
-
-		case *js_ast.SDirective, *js_ast.SImport, *js_ast.SExportFrom, *js_ast.SExportStar:
-			// These can't go in a try/catch block
-			result = append(result, stmt)
-			continue
-
-		case *js_ast.SExportClause:
-			// Merge export clauses together
-			exports = append(exports, s.Items...)
-			continue
-
-		case *js_ast.SFunction:
-			if shouldHoistFunctions {
-				// Hoist function declarations for cross-file ESM references
-				result = append(result, stmt)
-				continue
-			}
-
-		case *js_ast.SExportDefault:
-			if _, ok := s.Value.Data.(*js_ast.SFunction); ok && shouldHoistFunctions {
-				// Hoist function declarations for cross-file ESM references
-				result = append(result, stmt)
-				continue
-			}
-
-		case *js_ast.SLocal:
-			// If any of these are exported, turn it into a "var" and add export clauses
-			if s.IsExport {
-				js_ast.ForEachIdentifierBindingInDecls(s.Decls, func(loc logger.Loc, b *js_ast.BIdentifier) {
-					exports = append(exports, js_ast.ClauseItem{
-						Alias:    p.symbols[b.Ref.InnerIndex].OriginalName,
-						AliasLoc: loc,
-						Name:     ast.LocRef{Loc: loc, Ref: b.Ref},
-					})
-					s.Kind = js_ast.LocalVar
-				})
-				s.IsExport = false
-			}
-		}
-
-		stmts[end] = stmt
-		end++
-	}
-	stmts = stmts[:end]
-
-	// Generate the variables we'll need
-	caughtRef := p.newSymbol(ast.SymbolOther, "_")
-	errorRef := p.newSymbol(ast.SymbolOther, "_error")
-	hasErrorRef := p.newSymbol(ast.SymbolOther, "_hasError")
-
-	// Generated variables are declared with "var", so hoist them up
-	scope := p.currentScope
-	for !scope.Kind.StopsHoisting() {
-		scope = scope.Parent
-	}
-	isTopLevel := scope == p.moduleScope
-	scope.Generated = append(scope.Generated, ctx.stackRef, caughtRef, errorRef, hasErrorRef)
-	p.declaredSymbols = append(p.declaredSymbols,
-		js_ast.DeclaredSymbol{IsTopLevel: isTopLevel, Ref: ctx.stackRef},
-		js_ast.DeclaredSymbol{IsTopLevel: isTopLevel, Ref: caughtRef},
-		js_ast.DeclaredSymbol{IsTopLevel: isTopLevel, Ref: errorRef},
-		js_ast.DeclaredSymbol{IsTopLevel: isTopLevel, Ref: hasErrorRef},
-	)
-
-	// Call the "__callDispose" helper function at the end of the scope
-	loc := ctx.firstUsingLoc
-	p.recordUsage(ctx.stackRef)
-	p.recordUsage(errorRef)
-	p.recordUsage(hasErrorRef)
-	callDispose := p.callRuntime(loc, "__callDispose", []js_ast.Expr{
-		{Loc: loc, Data: &js_ast.EIdentifier{Ref: ctx.stackRef}},
-		{Loc: loc, Data: &js_ast.EIdentifier{Ref: errorRef}},
-		{Loc: loc, Data: &js_ast.EIdentifier{Ref: hasErrorRef}},
-	})
-
-	// If there was an "await using", optionally await the returned promise
-	var finallyStmts []js_ast.Stmt
-	if ctx.hasAwaitUsing {
-		promiseRef := p.generateTempRef(tempRefNoDeclare, "_promise")
-		scope.Generated = append(scope.Generated, promiseRef)
-		p.declaredSymbols = append(p.declaredSymbols, js_ast.DeclaredSymbol{IsTopLevel: isTopLevel, Ref: promiseRef})
-
-		// "await" expressions turn into "yield" expressions when lowering
-		p.recordUsage(promiseRef)
-		awaitExpr := p.maybeLowerAwait(loc, &js_ast.EAwait{Value: js_ast.Expr{Loc: loc, Data: &js_ast.EIdentifier{Ref: promiseRef}}})
-
-		p.recordUsage(promiseRef)
-		finallyStmts = []js_ast.Stmt{
-			{Loc: loc, Data: &js_ast.SLocal{Decls: []js_ast.Decl{{
-				Binding:    js_ast.Binding{Loc: loc, Data: &js_ast.BIdentifier{Ref: promiseRef}},
-				ValueOrNil: callDispose,
-			}}}},
-
-			// The "await" must not happen if an error was thrown before the
-			// "await using", so we conditionally await here:
-			//
-			//   var promise = __callDispose(stack, error, hasError);
-			//   promise && await promise;
-			//
-			{Loc: loc, Data: &js_ast.SExpr{Value: js_ast.Expr{Loc: loc, Data: &js_ast.EBinary{
-				Op:    js_ast.BinOpLogicalAnd,
-				Left:  js_ast.Expr{Loc: loc, Data: &js_ast.EIdentifier{Ref: promiseRef}},
-				Right: awaitExpr,
-			}}}},
-		}
-	} else {
-		finallyStmts = []js_ast.Stmt{{Loc: loc, Data: &js_ast.SExpr{Value: callDispose}}}
-	}
-
-	// Wrap everything in a try/catch/finally block
-	p.recordUsage(caughtRef)
-	result = append(result,
-		js_ast.Stmt{Loc: loc, Data: &js_ast.SLocal{
-			Decls: []js_ast.Decl{{
-				Binding:    js_ast.Binding{Loc: loc, Data: &js_ast.BIdentifier{Ref: ctx.stackRef}},
-				ValueOrNil: js_ast.Expr{Loc: loc, Data: &js_ast.EArray{}},
-			}},
-		}},
-		js_ast.Stmt{Loc: loc, Data: &js_ast.STry{
-			Block: js_ast.SBlock{
-				Stmts: stmts,
-			},
-			BlockLoc: loc,
-			Catch: &js_ast.Catch{
-				Loc:          loc,
-				BindingOrNil: js_ast.Binding{Loc: loc, Data: &js_ast.BIdentifier{Ref: caughtRef}},
-				Block: js_ast.SBlock{Stmts: []js_ast.Stmt{{Loc: loc, Data: &js_ast.SLocal{
-					Decls: []js_ast.Decl{{
-						Binding:    js_ast.Binding{Loc: loc, Data: &js_ast.BIdentifier{Ref: errorRef}},
-						ValueOrNil: js_ast.Expr{Loc: loc, Data: &js_ast.EIdentifier{Ref: caughtRef}},
-					}, {
-						Binding:    js_ast.Binding{Loc: loc, Data: &js_ast.BIdentifier{Ref: hasErrorRef}},
-						ValueOrNil: js_ast.Expr{Loc: loc, Data: &js_ast.EBoolean{Value: true}},
-					}},
-				}}}},
-				BlockLoc: loc,
-			},
-			Finally: &js_ast.Finally{
-				Loc:   loc,
-				Block: js_ast.SBlock{Stmts: finallyStmts},
-			},
-		}},
-	)
-	if len(exports) > 0 {
-		result = append(result, js_ast.Stmt{Loc: loc, Data: &js_ast.SExportClause{Items: exports}})
-	}
-	return result
-}
-
-func (p *parser) lowerUsingDeclarationInForOf(loc logger.Loc, init *js_ast.SLocal, body *js_ast.Stmt) {
-	binding := init.Decls[0].Binding
-	id := binding.Data.(*js_ast.BIdentifier)
-	tempRef := p.generateTempRef(tempRefNoDeclare, "_"+p.symbols[id.Ref.InnerIndex].OriginalName)
-	block, ok := body.Data.(*js_ast.SBlock)
-	if !ok {
-		block = &js_ast.SBlock{}
-		if _, ok := body.Data.(*js_ast.SEmpty); !ok {
-			block.Stmts = append(block.Stmts, *body)
-		}
-		body.Data = block
-	}
-	blockStmts := make([]js_ast.Stmt, 0, 1+len(block.Stmts))
-	blockStmts = append(blockStmts, js_ast.Stmt{Loc: loc, Data: &js_ast.SLocal{
-		Kind: init.Kind,
-		Decls: []js_ast.Decl{{
-			Binding:    js_ast.Binding{Loc: binding.Loc, Data: &js_ast.BIdentifier{Ref: id.Ref}},
-			ValueOrNil: js_ast.Expr{Loc: binding.Loc, Data: &js_ast.EIdentifier{Ref: tempRef}},
-		}},
-	}})
-	blockStmts = append(blockStmts, block.Stmts...)
-	ctx := p.lowerUsingDeclarationContext()
-	ctx.scanStmts(p, blockStmts)
-	block.Stmts = ctx.finalize(p, blockStmts, p.willWrapModuleInTryCatchForUsing && p.currentScope.Parent == nil)
-	init.Kind = js_ast.LocalVar
-	id.Ref = tempRef
-}
-
-func (p *parser) maybeLowerUsingDeclarationsInSwitch(loc logger.Loc, s *js_ast.SSwitch) []js_ast.Stmt {
-	// Check for a "using" declaration in any case
-	shouldLower := false
-	for _, c := range s.Cases {
-		if p.shouldLowerUsingDeclarations(c.Body) {
-			shouldLower = true
-			break
-		}
-	}
-	if !shouldLower {
-		return nil
-	}
-
-	// If we find one, lower all cases together
-	ctx := p.lowerUsingDeclarationContext()
-	for _, c := range s.Cases {
-		ctx.scanStmts(p, c.Body)
-	}
-	return ctx.finalize(p, []js_ast.Stmt{{Loc: loc, Data: s}}, false)
 }

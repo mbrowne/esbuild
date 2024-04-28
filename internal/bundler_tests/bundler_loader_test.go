@@ -1268,7 +1268,6 @@ func TestAssertTypeJSONWrongLoader(t *testing.T) {
 		files: map[string]string{
 			"/entry.js": `
 				import foo from './foo.json' assert { type: 'json' }
-				console.log(foo)
 			`,
 			"/foo.json": `{}`,
 		},
@@ -1283,62 +1282,6 @@ func TestAssertTypeJSONWrongLoader(t *testing.T) {
 		expectedScanLog: `entry.js: ERROR: The file "foo.json" was loaded with the "js" loader
 entry.js: NOTE: This import assertion requires the loader to be "json" instead:
 NOTE: You need to either reconfigure esbuild to ensure that the loader for this file is "json" or you need to remove this import assertion.
-`,
-	})
-}
-
-func TestWithTypeJSONOverrideLoader(t *testing.T) {
-	loader_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				import foo from './foo.js' with { type: 'json' }
-				console.log(foo)
-			`,
-			"/foo.js": `{ "this is json not js": true }`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode: config.ModeBundle,
-		},
-	})
-}
-
-func TestWithBadType(t *testing.T) {
-	loader_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				import foo from './foo.json' with { type: '' }
-				import bar from './foo.json' with { type: 'garbage' }
-				console.log(bar)
-			`,
-			"/foo.json": `{}`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode: config.ModeBundle,
-		},
-		expectedScanLog: `entry.js: ERROR: Importing with a type attribute of "" is not supported
-entry.js: ERROR: Importing with a type attribute of "garbage" is not supported
-`,
-	})
-}
-
-func TestWithBadAttribute(t *testing.T) {
-	loader_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				import foo from './foo.json' with { '': 'json' }
-				import bar from './foo.json' with { garbage: 'json' }
-				console.log(bar)
-			`,
-			"/foo.json": `{}`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode: config.ModeBundle,
-		},
-		expectedScanLog: `entry.js: ERROR: Importing with the "" attribute is not supported
-entry.js: ERROR: Importing with the "garbage" attribute is not supported
 `,
 	})
 }
@@ -1591,87 +1534,6 @@ func TestLoaderCopyWithInjectedFileBundle(t *testing.T) {
 				".ts": config.LoaderTS,
 				".js": config.LoaderCopy,
 			},
-		},
-	})
-}
-
-func TestLoaderBundleWithImportAttributes(t *testing.T) {
-	loader_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				import x from "./data.json"
-				import y from "./data.json" assert { type: 'json' }
-				import z from "./data.json" with { type: 'json' }
-				console.log(x === y, x !== z)
-			`,
-			"/data.json": `{ "works": true }`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/out.js",
-		},
-	})
-}
-
-func TestLoaderBundleWithTypeJSONOnlyDefaultExport(t *testing.T) {
-	loader_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				import x, {foo as x2} from "./data.json"
-				import y, {foo as y2} from "./data.json" with { type: 'json' }
-			`,
-			"/data.json": `{ "foo": 123 }`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/out.js",
-		},
-		expectedCompileLog: `entry.js: ERROR: No matching export in "data.json with { type: 'json' }" for import "foo"
-`,
-	})
-}
-
-func TestLoaderJSONPrototype(t *testing.T) {
-	loader_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				import data from "./data.json"
-				console.log(data)
-			`,
-			"/data.json": `{
-				"": "The property below should be converted to a computed property:",
-				"__proto__": { "foo": "bar" }
-			}`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/out.js",
-			MinifySyntax:  true,
-		},
-	})
-}
-
-func TestLoaderJSONPrototypeES5(t *testing.T) {
-	loader_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				import data from "./data.json"
-				console.log(data)
-			`,
-			"/data.json": `{
-				"": "The property below should NOT be converted to a computed property for ES5:",
-				"__proto__": { "foo": "bar" }
-			}`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:                  config.ModeBundle,
-			AbsOutputFile:         "/out.js",
-			MinifySyntax:          true,
-			UnsupportedJSFeatures: es(5),
 		},
 	})
 }

@@ -47,6 +47,24 @@ let buildTests = {
     }
   },
 
+  async errorIfGlob({ esbuild }) {
+    try {
+      await esbuild.build({
+        entryPoints: ['./src/*.js'],
+        logLevel: 'silent',
+        write: false,
+      })
+      throw new Error('Expected build failure');
+    } catch (e) {
+      if (!e.errors || !e.errors[0] || e.errors[0].text !== 'Could not resolve "./src/*.js"' ||
+        e.errors[0].notes[0].text !== 'It looks like you are trying to use glob syntax (i.e. "*") with esbuild. ' +
+        'This syntax is typically handled by your shell, and isn\'t handled by esbuild itself. ' +
+        'You must expand glob syntax first before passing your paths to esbuild.') {
+        throw e;
+      }
+    }
+  },
+
   // Verify that it's possible to disable a loader by setting it to "default".
   // In particular, verify that it's possible to disable the special loader ""
   // for extensionless files.
@@ -905,8 +923,8 @@ export {
     const names2 = result2.outputFiles.map(x => path.basename(x.path)).sort()
 
     // Check that the public path is included in chunk hashes but not asset hashes
-    assert.deepStrictEqual(names1, ['data-BYATPJRB.bin', 'in-7SVE3DTC.js'])
-    assert.deepStrictEqual(names2, ['data-BYATPJRB.bin', 'in-E6EBO534.js'])
+    assert.deepStrictEqual(names1, ['data-BYATPJRB.bin', 'in-OGEHLZ72.js'])
+    assert.deepStrictEqual(names2, ['data-BYATPJRB.bin', 'in-IF4VVJK4.js'])
   },
 
   async fileLoaderPublicPath({ esbuild, testDir }) {
@@ -945,7 +963,7 @@ export {
     assert.strictEqual(value.outputFiles, void 0)
     assert.strictEqual(await readFileAsync(output, 'utf8'), `/* scripts/.js-api-tests/fileLoaderCSS/in.css */
 body {
-  background: url("https://www.example.com/assets/data-BYATPJRB.bin");
+  background: url(https://www.example.com/assets/data-BYATPJRB.bin);
 }
 `)
   },
@@ -1558,7 +1576,7 @@ body {
           },
         },
         [makePath(output + '.map')]: {
-          bytes: 325,
+          bytes: 312,
           exports: [],
           imports: [],
           inputs: {},
@@ -1620,10 +1638,8 @@ body {
     assert.strictEqual(value.outputFiles.length, 2)
     assert.strictEqual(value.outputFiles[0].path, output + '.map')
     assert.strictEqual(value.outputFiles[0].contents.constructor, Uint8Array)
-    assert.strictEqual(value.outputFiles[0].hash, 'BIjVBRZOQ5s')
     assert.strictEqual(value.outputFiles[1].path, output)
     assert.strictEqual(value.outputFiles[1].contents.constructor, Uint8Array)
-    assert.strictEqual(value.outputFiles[1].hash, 'zvyzJPvi96o')
 
     const sourceMap = JSON.parse(Buffer.from(value.outputFiles[0].contents).toString())
     const js = Buffer.from(value.outputFiles[1].contents).toString()
@@ -3785,15 +3801,6 @@ function fetchHTTPS(host, port, path, { certfile }) {
   })
 }
 
-function partialFetch(host, port, path, { headers, method = 'GET' } = {}) {
-  return new Promise((resolve, reject) => {
-    http.request({ method, host, port, path, headers }, res => {
-      resolve(res)
-      res.socket.destroy()
-    }).on('error', reject).end()
-  })
-}
-
 const makeEventStream = (host, port, path) => {
   return new Promise((resolve, reject) => {
     const headers = {
@@ -4349,85 +4356,6 @@ let serveTests = {
     }
   },
 
-  async serveSlashRedirect({ esbuild, testDir }) {
-    const nestedDir = path.join(testDir, 'nested', 'dir')
-    const index = path.join(nestedDir, 'index.html')
-    await mkdirAsync(nestedDir, { recursive: true })
-    await writeFileAsync(index, `<!doctype html>`)
-
-    const context = await esbuild.context({});
-    try {
-      const result = await context.serve({
-        host: '127.0.0.1',
-        servedir: testDir,
-      })
-      assert.strictEqual(result.host, '127.0.0.1');
-      assert.strictEqual(typeof result.port, 'number');
-
-      // With a trailing slash
-      {
-        const buffer = await fetch(result.host, result.port, '/nested/dir/index.html')
-        assert.strictEqual(buffer.toString(), `<!doctype html>`)
-      }
-      {
-        const buffer = await fetch(result.host, result.port, '/nested/dir/')
-        assert.strictEqual(buffer.toString(), `<!doctype html>`)
-      }
-      {
-        const buffer = await fetch(result.host, result.port, '/nested/./dir/')
-        assert.strictEqual(buffer.toString(), `<!doctype html>`)
-      }
-      {
-        const buffer = await fetch(result.host, result.port, '/./nested/./dir/./')
-        assert.strictEqual(buffer.toString(), `<!doctype html>`)
-      }
-      {
-        const buffer = await fetch(result.host, result.port, '/nested/dir//')
-        assert.strictEqual(buffer.toString(), `<!doctype html>`)
-      }
-      {
-        const buffer = await fetch(result.host, result.port, '/nested//dir/')
-        assert.strictEqual(buffer.toString(), `<!doctype html>`)
-      }
-
-      // Without a trailing slash
-      {
-        const res = await partialFetch(result.host, result.port, '/nested')
-        assert.strictEqual(res.statusCode, 302)
-        assert.strictEqual(res.headers.location, '/nested/')
-      }
-      {
-        const res = await partialFetch(result.host, result.port, '/nested/dir')
-        assert.strictEqual(res.statusCode, 302)
-        assert.strictEqual(res.headers.location, '/nested/dir/')
-      }
-      {
-        const res = await partialFetch(result.host, result.port, '/nested//dir')
-        assert.strictEqual(res.statusCode, 302)
-        assert.strictEqual(res.headers.location, '/nested/dir/')
-      }
-
-      // With leading double slashes (looks like a protocol-relative URL)
-      {
-        const res = await partialFetch(result.host, result.port, '//nested')
-        assert.strictEqual(res.statusCode, 302)
-        assert.strictEqual(res.headers.location, '/nested/')
-      }
-      {
-        const res = await partialFetch(result.host, result.port, '//nested/dir')
-        assert.strictEqual(res.statusCode, 302)
-        assert.strictEqual(res.headers.location, '/nested/dir/')
-      }
-      {
-        const res = await partialFetch(result.host, result.port, '//nested//dir')
-        assert.strictEqual(res.statusCode, 302)
-        assert.strictEqual(res.headers.location, '/nested/dir/')
-      }
-    } finally {
-      await context.dispose();
-    }
-  },
-
   async serveOutfile({ esbuild, testDir }) {
     const input = path.join(testDir, 'in.js')
     const outfile = path.join(testDir, 'out.js')
@@ -4473,7 +4401,7 @@ let serveTests = {
     }
   },
 
-  async serveWithServedir({ esbuild, testDir }) {
+  async serveWithFallbackDir({ esbuild, testDir }) {
     const input = path.join(testDir, 'in.js')
     const wwwDir = path.join(testDir, 'www')
     const index = path.join(wwwDir, 'index.html')
@@ -4535,7 +4463,7 @@ let serveTests = {
     }
   },
 
-  async serveWithServedirAndSiblingOutputDir({ esbuild, testDir }) {
+  async serveWithFallbackDirAndSiblingOutputDir({ esbuild, testDir }) {
     const context = await esbuild.context({
       entryPoints: [path.join(testDir, 'in.js')],
       outdir: 'out',
@@ -4552,7 +4480,7 @@ let serveTests = {
     }
   },
 
-  async serveWithServedirAndParentOutputDir({ esbuild, testDir }) {
+  async serveWithFallbackDirAndParentOutputDir({ esbuild, testDir }) {
     const context = await esbuild.context({
       entryPoints: [path.join(testDir, 'in.js')],
       outdir: testDir,
@@ -4570,7 +4498,7 @@ let serveTests = {
     }
   },
 
-  async serveWithServedirAndOutputDir({ esbuild, testDir }) {
+  async serveWithFallbackDirAndOutputDir({ esbuild, testDir }) {
     const input = path.join(testDir, 'in.js')
     const outputDir = path.join(testDir, 'www/out')
     const wwwDir = path.join(testDir, 'www')
@@ -4646,7 +4574,7 @@ let serveTests = {
     }
   },
 
-  async serveWithServedirNoEntryPoints({ esbuild, testDir }) {
+  async serveWithFallbackDirNoEntryPoints({ esbuild, testDir }) {
     const index = path.join(testDir, 'index.html')
     await writeFileAsync(index, `<!doctype html>`)
 
@@ -5073,52 +5001,6 @@ let serveTests = {
     // This stream should end once "dispose()" is called above
     await endPromise
   },
-
-  async serveWithFallback({ esbuild, testDir }) {
-    const input = path.join(testDir, 'in.js')
-    const wwwDir = path.join(testDir, 'www')
-    const index = path.join(wwwDir, 'app', 'index.html')
-    const fallback = path.join(testDir, 'fallback.html')
-    await mkdirAsync(path.dirname(index), { recursive: true })
-    await writeFileAsync(input, `console.log(123)`)
-    await writeFileAsync(index, `<p>index</p>`)
-    await writeFileAsync(fallback, `<p>fallback</p>`)
-
-    const context = await esbuild.context({
-      entryPoints: [input],
-      format: 'esm',
-      outdir: wwwDir,
-      write: false,
-    });
-    try {
-      const result = await context.serve({
-        host: '127.0.0.1',
-        servedir: wwwDir,
-        fallback,
-      })
-      assert.strictEqual(result.host, '127.0.0.1');
-      assert.strictEqual(typeof result.port, 'number');
-
-      let buffer;
-
-      buffer = await fetch(result.host, result.port, '/in.js')
-      assert.strictEqual(buffer.toString(), `console.log(123);\n`);
-
-      buffer = await fetch(result.host, result.port, '/')
-      assert.strictEqual(buffer.toString(), `<p>fallback</p>`);
-
-      buffer = await fetch(result.host, result.port, '/app/')
-      assert.strictEqual(buffer.toString(), `<p>index</p>`);
-
-      buffer = await fetch(result.host, result.port, '/app/?foo')
-      assert.strictEqual(buffer.toString(), `<p>index</p>`);
-
-      buffer = await fetch(result.host, result.port, '/app/foo')
-      assert.strictEqual(buffer.toString(), `<p>fallback</p>`);
-    } finally {
-      await context.dispose();
-    }
-  },
 }
 
 async function futureSyntax(esbuild, js, targetBelow, targetAbove) {
@@ -5302,16 +5184,14 @@ let transformTests = {
   },
 
   async cssBannerFooterTransform({ esbuild }) {
-    for (const loader of ['css', 'local-css', 'global-css']) {
-      var { code } = await esbuild.transform(`
-        div { color: red }
-      `, {
-        loader,
-        banner: '/* banner */',
-        footer: '/* footer */',
-      })
-      assert.strictEqual(code, `/* banner */\ndiv {\n  color: red;\n}\n/* footer */\n`)
-    }
+    var { code } = await esbuild.transform(`
+      div { color: red }
+    `, {
+      loader: 'css',
+      banner: '/* banner */',
+      footer: '/* footer */',
+    })
+    assert.strictEqual(code, `/* banner */\ndiv {\n  color: red;\n}\n/* footer */\n`)
   },
 
   async transformDirectEval({ esbuild }) {
@@ -5739,7 +5619,7 @@ class Foo {
 
   async cssSyntaxErrorWarning({ esbuild }) {
     const { code } = await esbuild.transform(`. {}`, { loader: 'css' })
-    assert.strictEqual(code, `. {\n}\n`)
+    assert.strictEqual(code, `.\\  {\n}\n`)
   },
 
   async cssSyntaxErrorWarningOverride({ esbuild }) {
@@ -6611,26 +6491,6 @@ class Foo {
     assert.strictEqual((await esbuild.transform(`class Foo { static { x } }`, { supported: { 'class-static-blocks': false } })).code, `class Foo {\n}\nx;\n`)
   },
 
-  async keepNamesUnsupported({ esbuild }) {
-    try {
-      await esbuild.transform(``, { keepNames: true, target: 'chrome36' })
-      throw new Error('Expected an error to be thrown')
-    } catch (e) {
-      assert.strictEqual(e.errors[0].text,
-        'The "keep names" setting cannot be used with the configured target environment ("chrome36")')
-    }
-
-    try {
-      await esbuild.transform(``, { keepNames: true, target: 'chrome46', supported: { 'function-name-configurable': false } })
-      throw new Error('Expected an error to be thrown')
-    } catch (e) {
-      assert.strictEqual(e.errors[0].text,
-        'The "keep names" setting cannot be used with the configured target environment ("chrome46" + 1 override)')
-    }
-
-    await esbuild.transform(``, { keepNames: true, target: 'chrome46' })
-  },
-
   async inlineScript({ esbuild }) {
     let p
     assert.strictEqual((await esbuild.transform(`x = '</script>'`, {})).code, `x = "<\\/script>";\n`)
@@ -6784,9 +6644,7 @@ class Foo {
 
       // CSS: lower
       check({ supported: { 'hex-rgba': true }, loader: 'css' }, `a { color: #1234 }`, `a {\n  color: #1234;\n}\n`),
-      check({ supported: { 'hex-rgba': false }, loader: 'css' }, `a { color: #1234 }`, `a {\n  color: rgba(17, 34, 51, .267);\n}\n`),
-      check({ target: 'safari15.3', loader: 'css' }, `a { mask-image: url(x.png) }`, `a {\n  -webkit-mask-image: url(x.png);\n  mask-image: url(x.png);\n}\n`),
-      check({ target: 'safari15.4', loader: 'css' }, `a { mask-image: url(x.png) }`, `a {\n  mask-image: url(x.png);\n}\n`),
+      check({ supported: { 'hex-rgba': false }, loader: 'css' }, `a { color: #1234 }`, `a {\n  color: rgba(17, 34, 51, 0.267);\n}\n`),
 
       // Check for "+ 2 overrides"
       check({ supported: { bigint: false, arrow: true }, target: 'es2022' }, `x = 1n`, `Big integer literals are not available in the configured target environment ("es2022" + 2 overrides)`),
@@ -6839,6 +6697,13 @@ class Foo {
   nonIdArrayRest: ({ esbuild }) => futureSyntax(esbuild, 'let [...[x]] = y', 'es2015', 'es2016'),
   topLevelAwait: ({ esbuild }) => futureSyntax(esbuild, 'await foo', 'es2020', 'esnext'),
   topLevelForAwait: ({ esbuild }) => futureSyntax(esbuild, 'for await (foo of bar) ;', 'es2020', 'esnext'),
+
+  // Future syntax: async generator functions
+  asyncGenFnStmt: ({ esbuild }) => futureSyntax(esbuild, 'async function* foo() {}', 'es2017', 'es2018'),
+  asyncGenFnExpr: ({ esbuild }) => futureSyntax(esbuild, '(async function*() {})', 'es2017', 'es2018'),
+  asyncGenObjFn: ({ esbuild }) => futureSyntax(esbuild, '({ async* foo() {} })', 'es2017', 'es2018'),
+  asyncGenClassStmtFn: ({ esbuild }) => futureSyntax(esbuild, 'class Foo { async* foo() {} }', 'es2017', 'es2018'),
+  asyncGenClassExprFn: ({ esbuild }) => futureSyntax(esbuild, '(class { async* foo() {} })', 'es2017', 'es2018'),
 }
 
 function registerClassPrivateTests(target) {
@@ -7038,7 +6903,7 @@ let functionScopeCases = [
   }
 }
 
-let apiSyncTests = {
+let syncTests = {
   async defaultExport({ esbuild }) {
     assert.strictEqual(typeof esbuild.version, 'string')
     assert.strictEqual(esbuild.version, esbuild.default.version)
@@ -7067,7 +6932,6 @@ let apiSyncTests = {
     assert.strictEqual(result.outputFiles[0].path, output)
     assert.strictEqual(result.outputFiles[0].text, text)
     assert.deepStrictEqual(result.outputFiles[0].contents, new Uint8Array(Buffer.from(text)))
-    assert.strictEqual(result.outputFiles[0].hash, 'H4KMzZ07fA0')
   },
 
   async transformSyncJSMap({ esbuild }) {
@@ -7356,26 +7220,6 @@ let childProcessTests = {
   },
 }
 
-let syncTests = {
-  async startStop({ esbuild }) {
-    for (let i = 0; i < 3; i++) {
-      let result1 = await esbuild.transform('1+2')
-      assert.strictEqual(result1.code, '1 + 2;\n')
-
-      let result2 = esbuild.transformSync('2+3')
-      assert.strictEqual(result2.code, '2 + 3;\n')
-
-      let result3 = await esbuild.build({ stdin: { contents: '1+2' }, write: false })
-      assert.strictEqual(result3.outputFiles[0].text, '1 + 2;\n')
-
-      let result4 = esbuild.buildSync({ stdin: { contents: '2+3' }, write: false })
-      assert.strictEqual(result4.outputFiles[0].text, '2 + 3;\n')
-
-      esbuild.stop()
-    }
-  },
-}
-
 async function assertSourceMap(jsSourceMap, source) {
   jsSourceMap = JSON.parse(jsSourceMap)
   assert.deepStrictEqual(jsSourceMap.version, 3)
@@ -7419,11 +7263,11 @@ async function main() {
     ...Object.entries(transformTests),
     ...Object.entries(formatTests),
     ...Object.entries(analyzeTests),
-    ...Object.entries(apiSyncTests),
+    ...Object.entries(syncTests),
     ...Object.entries(childProcessTests),
   ]
 
-  let allTestsPassed = (await Promise.all(tests.map(([name, fn]) => {
+  const allTestsPassed = (await Promise.all(tests.map(([name, fn]) => {
     const promise = runTest(name, fn)
 
     // Time out each individual test after 3 minutes. This exists to help debug test hangs in CI.
@@ -7434,12 +7278,6 @@ async function main() {
     }, minutes * 60 * 1000)
     return promise.finally(() => clearTimeout(timeout))
   }))).every(success => success)
-
-  for (let [name, fn] of Object.entries(syncTests)) {
-    if (!await runTest(name, fn)) {
-      allTestsPassed = false
-    }
-  }
 
   if (!allTestsPassed) {
     console.error(`❌ js api tests failed`)

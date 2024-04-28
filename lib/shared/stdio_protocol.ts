@@ -30,7 +30,6 @@ export interface ServeRequest {
   servedir?: string
   keyfile?: string
   certfile?: string
-  fallback?: string
 }
 
 export interface ServeResponse {
@@ -67,7 +66,6 @@ export interface OnEndResponse {
 export interface BuildOutputFile {
   path: string
   contents: Uint8Array
-  hash: string
 }
 
 export interface PingRequest {
@@ -222,7 +220,6 @@ export interface OnLoadRequest {
   namespace: string
   suffix: string
   pluginData: number
-  with: Record<string, string>
 }
 
 export interface OnLoadResponse {

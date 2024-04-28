@@ -980,7 +980,7 @@ let pluginTests = {
 
   async virtualEntryPoints({ esbuild, testDir }) {
     const result = await esbuild.build({
-      entryPoints: ['1', '2', 'a<>:"|?b', 'a/b/c.d.e'],
+      entryPoints: ['1', '2', 'a<>:"|?*b', 'a/b/c.d.e'],
       bundle: true,
       write: false,
       outdir: testDir,
@@ -1004,7 +1004,7 @@ let pluginTests = {
     assert.strictEqual(result.outputFiles[3].path, path.join(testDir, 'a/b/c.d.js'))
     assert.strictEqual(result.outputFiles[0].text, `// virtual-ns:input 1\nconsole.log("input 1");\n`)
     assert.strictEqual(result.outputFiles[1].text, `// virtual-ns:input 2\nconsole.log("input 2");\n`)
-    assert.strictEqual(result.outputFiles[2].text, `// virtual-ns:input a<>:"|?b\nconsole.log('input a<>:"|?b');\n`)
+    assert.strictEqual(result.outputFiles[2].text, `// virtual-ns:input a<>:"|?*b\nconsole.log('input a<>:"|?*b');\n`)
     assert.strictEqual(result.outputFiles[3].text, `// virtual-ns:input a/b/c.d.e\nconsole.log("input a/b/c.d.e");\n`)
   },
 
@@ -1958,32 +1958,6 @@ let pluginTests = {
     assert.strictEqual(resolveKind, 'import-rule')
   },
 
-  async resolveKindComposesFrom({ esbuild }) {
-    let resolveKind = '<missing>'
-    try {
-      await esbuild.build({
-        entryPoints: ['entry'],
-        bundle: true,
-        write: false,
-        logLevel: 'silent',
-        plugins: [{
-          name: 'plugin',
-          setup(build) {
-            build.onResolve({ filter: /.*/ }, args => {
-              if (args.importer === '') return { path: args.path, namespace: 'ns' }
-              else resolveKind = args.kind
-            })
-            build.onLoad({ filter: /.*/, namespace: 'ns' }, () => {
-              return { contents: `.foo { composes: bar from 'entry' }`, loader: 'local-css' }
-            })
-          },
-        }],
-      })
-    } catch (e) {
-    }
-    assert.strictEqual(resolveKind, 'composes-from')
-  },
-
   async resolveKindURLToken({ esbuild }) {
     let resolveKind = '<missing>'
     try {
@@ -2484,62 +2458,6 @@ error: Invalid path suffix "%what" returned from plugin (must start with "?" or 
       }],
     })
     assert.strictEqual(result.outputFiles[0].text, 'console.log(/* @__PURE__ */ jay_ess_ex("div", null));\n')
-  },
-
-  async importAttributes({ esbuild }) {
-    const result = await esbuild.build({
-      entryPoints: ['entry'],
-      bundle: true,
-      format: 'esm',
-      charset: 'utf8',
-      write: false,
-      plugins: [{
-        name: 'name',
-        setup(build) {
-          build.onResolve({ filter: /.*/ }, args => {
-            return { path: args.path, namespace: 'ns' }
-          })
-          build.onLoad({ filter: /.*/ }, args => {
-            const entry = `
-              import a from 'foo' with { type: 'cheese' }
-              import b from 'foo' with { pizza: 'true' }
-              console.log(a, b)
-            `
-            if (args.path === 'entry') return { contents: entry }
-            if (args.with.type === 'cheese') return { contents: `export default "🧀"` }
-            if (args.with.pizza === 'true') return { contents: `export default "🍕"` }
-          })
-        },
-      }],
-    })
-    assert.strictEqual(result.outputFiles[0].text, `// ns:foo with { type: 'cheese' }
-var foo_default = "🧀";
-
-// ns:foo with { pizza: 'true' }
-var foo_default2 = "🍕";
-
-// ns:entry
-console.log(foo_default, foo_default2);
-`)
-  },
-
-  async internalCrashIssue3634({ esbuild }) {
-    await esbuild.build({
-      entryPoints: [],
-      bundle: true,
-      plugins: [{
-        name: 'abc',
-        setup(build) {
-          build.onStart(async () => {
-            const result = await build.resolve('/foo', {
-              kind: 'require-call',
-              resolveDir: 'bar',
-            })
-            assert.strictEqual(result.errors.length, 1)
-          })
-        }
-      }],
-    })
   },
 }
 

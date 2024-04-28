@@ -2,13 +2,9 @@ import type * as types from "../shared/types"
 import * as common from "../shared/common"
 import * as ourselves from "./wasm"
 
-interface Go {
-  _scheduledTimeouts: Map<number, ReturnType<typeof setTimeout>>
-}
-
 declare const ESBUILD_VERSION: string
 declare let WEB_WORKER_SOURCE_CODE: string
-declare let WEB_WORKER_FUNCTION: (postMessage: (data: Uint8Array) => void) => (event: { data: Uint8Array | ArrayBuffer | WebAssembly.Module }) => Go
+declare let WEB_WORKER_FUNCTION: (postMessage: (data: Uint8Array) => void) => (event: { data: Uint8Array | ArrayBuffer | WebAssembly.Module }) => void
 
 export let version = ESBUILD_VERSION
 
@@ -50,7 +46,6 @@ export const analyzeMetafileSync: typeof types.analyzeMetafileSync = () => {
 
 export const stop = () => {
   if (stopService) stopService()
-  return Promise.resolve()
 }
 
 interface Service {
@@ -96,14 +91,10 @@ const startRunningService = async (wasmURL: string | URL, wasmModule: WebAssembl
   } else {
     // Run esbuild on the main thread
     let onmessage = WEB_WORKER_FUNCTION((data: Uint8Array) => worker.onmessage!({ data }))
-    let go: Go | undefined
     worker = {
       onmessage: null,
-      postMessage: data => setTimeout(() => go = onmessage({ data })),
+      postMessage: data => setTimeout(() => onmessage({ data })),
       terminate() {
-        if (go)
-          for (let timeout of go._scheduledTimeouts.values())
-            clearTimeout(timeout)
       },
     }
   }

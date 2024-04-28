@@ -17,7 +17,7 @@ TestEmptyLoaderCSS
   "version": 3,
   "sources": ["entry.css"],
   "sourcesContent": ["\n\t\t\t\t@import 'a.empty';\n\t\t\t\ta { background: url(b.empty) }\n\t\t\t"],
-  "mappings": ";AAEI;AAAI,cAAY;AAAa;",
+  "mappings": ";AAEI;AAAI;AAAA;",
   "names": []
 }
 
@@ -58,7 +58,7 @@ a {
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 203
+      "bytes": 198
     },
     "entry.css": {
       "imports": [
@@ -257,18 +257,6 @@ var x_b64 = require_x();
 console.log(x_b64, y_default);
 
 ================================================================================
-TestLoaderBundleWithImportAttributes
----------- /out.js ----------
-// data.json
-var data_default = { works: true };
-
-// data.json with { type: 'json' }
-var data_default2 = { works: true };
-
-// entry.js
-console.log(data_default === data_default, data_default !== data_default2);
-
-================================================================================
 TestLoaderCopyEntryPointAdvanced
 ---------- /out/xyz-DYPYXS7B.copy ----------
 more stuff
@@ -323,7 +311,7 @@ console.log(x);
 ---------- /out/src/entry.css ----------
 /* Users/user/project/src/entry.css */
 body {
-  background: url("../assets/some.file");
+  background: url(../assets/some.file);
 }
 
 ================================================================================
@@ -333,7 +321,7 @@ stuff
 ---------- /out/src/entry.css ----------
 /* Users/user/project/src/entry.css */
 body {
-  background: url("../some-BYATPJRB.file");
+  background: url(../some-BYATPJRB.file);
 }
 
 ================================================================================
@@ -678,7 +666,7 @@ x
 ---------- /out/entries/entry.css ----------
 /* src/shared/common.css */
 div {
-  background: url("../common-LSAMBFUD.png");
+  background: url(../common-LSAMBFUD.png);
 }
 
 /* src/entries/entry.css */
@@ -686,7 +674,7 @@ div {
 ---------- /out/entries/other/entry.css ----------
 /* src/shared/common.css */
 div {
-  background: url("../../common-LSAMBFUD.png");
+  background: url(../../common-LSAMBFUD.png);
 }
 
 /* src/entries/other/entry.css */
@@ -716,7 +704,7 @@ x
 ---------- /out/entries/entry.css ----------
 /* src/entries/entry.css */
 div {
-  background: url("https://example.com/images/image-LSAMBFUD.png");
+  background: url(https://example.com/images/image-LSAMBFUD.png);
 }
 
 ================================================================================
@@ -737,7 +725,7 @@ x
 ---------- /out/entries/entry.css ----------
 /* src/entries/entry.css */
 div {
-  background: url("https://example.com/image-LSAMBFUD.png");
+  background: url(https://example.com/image-LSAMBFUD.png);
 }
 
 ================================================================================
@@ -758,7 +746,7 @@ x
 ---------- /out/entries/entry.css ----------
 /* src/entries/entry.css */
 div {
-  background: url("../images/image-LSAMBFUD.png");
+  background: url(../images/image-LSAMBFUD.png);
 }
 
 ================================================================================
@@ -779,7 +767,7 @@ x
 ---------- /out/entries/entry.css ----------
 /* src/entries/entry.css */
 div {
-  background: url("../image-LSAMBFUD.png");
+  background: url(../image-LSAMBFUD.png);
 }
 
 ================================================================================
@@ -900,30 +888,6 @@ TestLoaderJSONNoBundleIIFE
 })();
 
 ================================================================================
-TestLoaderJSONPrototype
----------- /out.js ----------
-// data.json
-var data_default = {
-  "": "The property below should be converted to a computed property:",
-  ["__proto__"]: { foo: "bar" }
-};
-
-// entry.js
-console.log(data_default);
-
-================================================================================
-TestLoaderJSONPrototypeES5
----------- /out.js ----------
-// data.json
-var data_default = {
-  "": "The property below should NOT be converted to a computed property for ES5:",
-  __proto__: { foo: "bar" }
-};
-
-// entry.js
-console.log(data_default);
-
-================================================================================
 TestLoaderJSONSharedWithMultipleEntriesIssue413
 ---------- /out/a.js ----------
 // data.json
@@ -1014,12 +978,3 @@ var require_test = __commonJS({
 
 // entry.js
 console.log(require_test());
-
-================================================================================
-TestWithTypeJSONOverrideLoader
----------- entry.js ----------
-// foo.js
-var foo_default = { "this is json not js": true };
-
-// entry.js
-console.log(foo_default);

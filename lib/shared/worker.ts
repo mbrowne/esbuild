@@ -37,7 +37,6 @@ onmessage = ({ data: wasm }: { data: WebAssembly.Module | string }) => {
       stdin.push(data)
       if (resumeStdin) resumeStdin()
     }
-    return go
   }
 
   fs.read = (
@@ -77,8 +76,6 @@ onmessage = ({ data: wasm }: { data: WebAssembly.Module | string }) => {
       postMessage(error)
     },
   )
-
-  return go
 }
 
 async function tryToInstantiateModule(wasm: WebAssembly.Module | string, go: Go): Promise<WebAssembly.Instance> {

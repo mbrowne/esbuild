@@ -835,10 +835,10 @@ func TestExportMissingES6(t *testing.T) {
 				console.log(ns)
 			`,
 			"/foo.js": `
-				export {buton} from './bar'
+				export {nope} from './bar'
 			`,
 			"/bar.js": `
-				export const button = 123
+				export const yep = 123
 			`,
 		},
 		entryPaths: []string{"/entry.js"},
@@ -846,8 +846,7 @@ func TestExportMissingES6(t *testing.T) {
 			Mode:          config.ModeBundle,
 			AbsOutputFile: "/out.js",
 		},
-		expectedCompileLog: `foo.js: ERROR: No matching export in "bar.js" for import "buton"
-bar.js: NOTE: Did you mean to import "button" instead?
+		expectedCompileLog: `foo.js: ERROR: No matching export in "bar.js" for import "nope"
 `,
 	})
 }
@@ -1291,7 +1290,7 @@ func TestImportInsideTry(t *testing.T) {
 			AbsOutputFile: "/out.js",
 		},
 		expectedScanLog: `entry.js: ERROR: Could not resolve "nope1"
-NOTE: You can mark the path "nope1" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle. You can also add ".catch()" here to handle this failure at run-time instead of bundle-time.
+NOTE: You can mark the path "nope1" as external to exclude it from the bundle, which will remove this error. You can also add ".catch()" here to handle this failure at run-time instead of bundle-time.
 `,
 	})
 }
@@ -1319,16 +1318,12 @@ func TestSourceMap(t *testing.T) {
 		files: map[string]string{
 			"/Users/user/project/src/entry.js": `
 				import {bar} from './bar'
-				import data from './data.txt'
 				function foo() { bar() }
 				foo()
-				console.log(data)
 			`,
 			"/Users/user/project/src/bar.js": `
 				export function bar() { throw new Error('test') }
 			`,
-			// Someone wanted data from the text loader to show up in the source map: https://github.com/evanw/esbuild/issues/2041
-			"/Users/user/project/src/data.txt": `#2041`,
 		},
 		entryPaths: []string{"/Users/user/project/src/entry.js"},
 		options: config.Options{
@@ -1669,31 +1664,6 @@ func TestExportWildcardFSNodeCommonJS(t *testing.T) {
 					},
 				},
 			},
-		},
-	})
-}
-
-// https://github.com/evanw/esbuild/issues/3544
-func TestNodeAnnotationFalsePositiveIssue3544(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.mjs": `
-				export function confuseNode(exports) {
-					// If this local is called "exports", node incorrectly
-					// thinks this file has an export called "notAnExport".
-					// We must make sure that it doesn't have that name
-					// when targeting Node with CommonJS.
-					exports.notAnExport = function() {
-					};
-				}
-			`,
-		},
-		entryPaths: []string{"/entry.mjs"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			OutputFormat:  config.FormatCommonJS,
-			AbsOutputFile: "/out.js",
-			Platform:      config.PlatformNode,
 		},
 	})
 }
@@ -2320,17 +2290,17 @@ func TestExternalModuleExclusionScopedPackage(t *testing.T) {
 			},
 		},
 		expectedScanLog: `index.js: ERROR: Could not resolve "@a1-a2"
-NOTE: You can mark the path "@a1-a2" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+NOTE: You can mark the path "@a1-a2" as external to exclude it from the bundle, which will remove this error.
 index.js: ERROR: Could not resolve "@b1"
-NOTE: You can mark the path "@b1" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+NOTE: You can mark the path "@b1" as external to exclude it from the bundle, which will remove this error.
 index.js: ERROR: Could not resolve "@b1/b2-b3"
-NOTE: You can mark the path "@b1/b2-b3" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+NOTE: You can mark the path "@b1/b2-b3" as external to exclude it from the bundle, which will remove this error.
 index.js: ERROR: Could not resolve "@c1"
-NOTE: You can mark the path "@c1" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+NOTE: You can mark the path "@c1" as external to exclude it from the bundle, which will remove this error.
 index.js: ERROR: Could not resolve "@c1/c2"
-NOTE: You can mark the path "@c1/c2" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+NOTE: You can mark the path "@c1/c2" as external to exclude it from the bundle, which will remove this error.
 index.js: ERROR: Could not resolve "@c1/c2/c3-c4"
-NOTE: You can mark the path "@c1/c2/c3-c4" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+NOTE: You can mark the path "@c1/c2/c3-c4" as external to exclude it from the bundle, which will remove this error.
 `,
 	})
 }
@@ -2823,34 +2793,38 @@ func TestMinifyNestedLabelsNoBundle(t *testing.T) {
 	default_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/entry.js": `
-				L001:L002:L003:L004:L005:L006:L007:L008:L009:L010:L011:L012:L013:L014:L015:L016:{nl(` + "`\n`" + `)
-				L017:L018:L019:L020:L021:L022:L023:L024:L025:L026:L027:L028:L029:L030:L031:L032:{nl(` + "`\n`" + `)
-				L033:L034:L035:L036:L037:L038:L039:L040:L041:L042:L043:L044:L045:L046:L047:L048:{nl(` + "`\n`" + `)
-				L049:L050:L051:L052:L053:L054:L055:L056:L057:L058:L059:L060:L061:L062:L063:L064:{nl(` + "`\n`" + `)
-				L065:L066:L067:L068:L069:L070:L071:L072:L073:L074:L075:L076:L077:L078:L079:L080:{nl(` + "`\n`" + `)
-				L081:L082:L083:L084:L085:L086:L087:L088:L089:L090:L091:L092:L093:L094:L095:L096:{nl(` + "`\n`" + `)
-				L097:L098:L099:L100:L101:L102:L103:L104:L105:L106:L107:L108:L109:L110:L111:L112:{nl(` + "`\n`" + `)
-				L113:L114:L115:L116:L117:L118:L119:L120:L121:L122:L123:L124:L125:L126:L127:L128:{nl(` + "`\n`" + `)
-				L129:L130:L131:L132:L133:L134:L135:L136:L137:L138:L139:L140:L141:L142:L143:L144:{nl(` + "`\n`" + `)
-				L145:L146:L147:L148:L149:L150:L151:L152:L153:L154:L155:L156:L157:L158:L159:L160:{nl(` + "`\n`" + `)
-				L161:L162:L163:L164:L165:L166:L167:L168:L169:L170:L171:L172:L173:L174:L175:L176:{nl(` + "`\n`" + `)
-				L177:L178:L179:L180:L181:L182:L183:L184:L185:L186:L187:L188:L189:L190:L191:L192:{nl(` + "`\n`" + `)
-				L193:L194:L195:L196:L197:L198:L199:L200:L201:L202:L203:L204:L205:L206:L207:L208:{nl(` + "`\n`" + `)
-				L209:L210:L211:L212:L213:L214:L215:L216:L217:L218:L219:L220:L221:L222:L223:L224:{nl(` + "`\n`" + `)
-				L225:L226:L227:L228:L229:L230:L231:L232:L233:L234:L235:L236:L237:L238:L239:L240:{nl(` + "`\n`" + `)
-				L241:L242:L243:L244:L245:L246:L247:L248:L249:L250:L251:L252:L253:L254:L255:L256:{nl(` + "`\n`" + `)
-				L257:L258:L259:L260:L261:L262:L263:L264:L265:L266:L267:L268:L269:L270:L271:L272:{nl(` + "`\n`" + `)
-				L273:L274:L275:L276:L277:L278:L279:L280:L281:L282:L283:L284:L285:L286:L287:L288:{nl(` + "`\n`" + `)
-				L289:L290:L291:L292:L293:L294:L295:L296:L297:L298:L299:L300:L301:L302:L303:L304:{nl(` + "`\n`" + `)
-				L305:L306:L307:L308:L309:L310:L311:L312:L313:L314:L315:L316:L317:L318:L319:L320:{nl(` + "`\n`" + `)
-				L321:L322:L323:L324:L325:L326:L327:L328:L329:L330:L331:L332:L333:{}}}}}}}}}}}}}}}}}}nl(` + "`\n`" + `)
-				}}}
+				L001:{L002:{L003:{L004:{L005:{L006:{L007:{L008:{L009:{L010:{L011:{L012:{L013:{L014:{L015:{L016:{nl('\n')
+				L017:{L018:{L019:{L020:{L021:{L022:{L023:{L024:{L025:{L026:{L027:{L028:{L029:{L030:{L031:{L032:{nl('\n')
+				L033:{L034:{L035:{L036:{L037:{L038:{L039:{L040:{L041:{L042:{L043:{L044:{L045:{L046:{L047:{L048:{nl('\n')
+				L049:{L050:{L051:{L052:{L053:{L054:{L055:{L056:{L057:{L058:{L059:{L060:{L061:{L062:{L063:{L064:{nl('\n')
+				L065:{L066:{L067:{L068:{L069:{L070:{L071:{L072:{L073:{L074:{L075:{L076:{L077:{L078:{L079:{L080:{nl('\n')
+				L081:{L082:{L083:{L084:{L085:{L086:{L087:{L088:{L089:{L090:{L091:{L092:{L093:{L094:{L095:{L096:{nl('\n')
+				L097:{L098:{L099:{L100:{L101:{L102:{L103:{L104:{L105:{L106:{L107:{L108:{L109:{L110:{L111:{L112:{nl('\n')
+				L113:{L114:{L115:{L116:{L117:{L118:{L119:{L120:{L121:{L122:{L123:{L124:{L125:{L126:{L127:{L128:{nl('\n')
+				L129:{L130:{L131:{L132:{L133:{L134:{L135:{L136:{L137:{L138:{L139:{L140:{L141:{L142:{L143:{L144:{nl('\n')
+				L145:{L146:{L147:{L148:{L149:{L150:{L151:{L152:{L153:{L154:{L155:{L156:{L157:{L158:{L159:{L160:{nl('\n')
+				L161:{L162:{L163:{L164:{L165:{L166:{L167:{L168:{L169:{L170:{L171:{L172:{L173:{L174:{L175:{L176:{nl('\n')
+				L177:{L178:{L179:{L180:{L181:{L182:{L183:{L184:{L185:{L186:{L187:{L188:{L189:{L190:{L191:{L192:{nl('\n')
+				L193:{L194:{L195:{L196:{L197:{L198:{L199:{L200:{L201:{L202:{L203:{L204:{L205:{L206:{L207:{L208:{nl('\n')
+				L209:{L210:{L211:{L212:{L213:{L214:{L215:{L216:{L217:{L218:{L219:{L220:{L221:{L222:{L223:{L224:{nl('\n')
+				L225:{L226:{L227:{L228:{L229:{L230:{L231:{L232:{L233:{L234:{L235:{L236:{L237:{L238:{L239:{L240:{nl('\n')
+				L241:{L242:{L243:{L244:{L245:{L246:{L247:{L248:{L249:{L250:{L251:{L252:{L253:{L254:{L255:{L256:{nl('\n')
+				L257:{L258:{L259:{L260:{L261:{L262:{L263:{L264:{L265:{L266:{L267:{L268:{L269:{L270:{L271:{L272:{nl('\n')
+				L273:{L274:{L275:{L276:{L277:{L278:{L279:{L280:{L281:{L282:{L283:{L284:{L285:{L286:{L287:{L288:{nl('\n')
+				L289:{L290:{L291:{L292:{L293:{L294:{L295:{L296:{L297:{L298:{L299:{L300:{L301:{L302:{L303:{L304:{nl('\n')
+				L305:{L306:{L307:{L308:{L309:{L310:{L311:{L312:{L313:{L314:{L315:{L316:{L317:{L318:{L319:{L320:{nl('\n')
+				L321:{L322:{L323:{L324:{L325:{L326:{L327:{L328:{L329:{L330:{L331:{L332:{L333:{}}}}}}}}}}}}}}}}}}nl('\n')
+				}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}nl('\n')
+				}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}nl('\n')
+				}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}nl('\n')
+				}}}}}}}}}}}}}}}}}}}}}}}}}}}
 			`,
 		},
 		entryPaths: []string{"/entry.js"},
 		options: config.Options{
 			MinifyWhitespace:  true,
 			MinifyIdentifiers: true,
+			MinifySyntax:      true,
 			AbsOutputFile:     "/out.js",
 		},
 	})
@@ -4084,7 +4058,6 @@ func TestTopLevelAwaitForbiddenRequire(t *testing.T) {
 				await 0
 			`,
 			"/a.js": `
-				import './something' // Deliberately offset the import record index
 				import './b'
 			`,
 			"/b.js": `
@@ -4093,7 +4066,6 @@ func TestTopLevelAwaitForbiddenRequire(t *testing.T) {
 			"/c.js": `
 				await 0
 			`,
-			"/something.js": ``,
 		},
 		entryPaths: []string{"/entry.js"},
 		options: config.Options{
@@ -5329,64 +5301,6 @@ func TestDefineOptionalChainLowered(t *testing.T) {
 	})
 }
 
-// See: https://github.com/evanw/esbuild/issues/3551
-func TestDefineOptionalChainPanicIssue3551(t *testing.T) {
-	defines := config.ProcessDefines(map[string]config.DefineData{
-		"x": {
-			DefineExpr: &config.DefineExpr{
-				Constant: &js_ast.ENumber{Value: 1},
-			},
-		},
-		"a.b": {
-			DefineExpr: &config.DefineExpr{
-				Constant: &js_ast.ENumber{Value: 1},
-			},
-		},
-	})
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/id-define.js": `
-				x?.y.z;
-				(x?.y).z;
-				x?.y["z"];
-				(x?.y)["z"];
-				x?.y();
-				(x?.y)();
-				x?.y.z();
-				(x?.y).z();
-				x?.y["z"]();
-				(x?.y)["z"]();
-				delete x?.y.z;
-				delete (x?.y).z;
-				delete x?.y["z"];
-				delete (x?.y)["z"];
-			`,
-			"/dot-define.js": `
-				a?.b.c;
-				(a?.b).c;
-				a?.b["c"];
-				(a?.b)["c"];
-				a?.b();
-				(a?.b)();
-				a?.b.c();
-				(a?.b).c();
-				a?.b["c"]();
-				(a?.b)["c"]();
-				delete a?.b.c;
-				delete (a?.b).c;
-				delete a?.b["c"];
-				delete (a?.b)["c"];
-			`,
-		},
-		entryPaths: []string{"/id-define.js", "/dot-define.js"},
-		options: config.Options{
-			Mode:         config.ModeBundle,
-			AbsOutputDir: "/out",
-			Defines:      &defines,
-		},
-	})
-}
-
 // See: https://github.com/evanw/esbuild/issues/2407
 func TestDefineInfiniteLoopIssue2407(t *testing.T) {
 	defines := config.ProcessDefines(map[string]config.DefineData{
@@ -5612,21 +5526,12 @@ NOTE: Use the relative path "./some/other/file" to reference the file "Users/use
 	})
 }
 
-// Assigning to a top-level "const" that will be transformed into a "var" must
-// be an error at compile-time because it won't be an error at run-time. Note
-// that the minifier is allowed to transform nested "const" into "let" (to
-// reduce code size further) when bundling is active, so nested "const" also
-// needs to be an error in this case.
 func TestForbidConstAssignWhenBundling(t *testing.T) {
 	default_suite.expectBundled(t, bundled{
 		files: map[string]string{
 			"/entry.js": `
 				const x = 1
 				x = 2
-				function foo() {
-					const y = 1
-					y = 2
-				}
 			`,
 		},
 		entryPaths: []string{"/entry.js"},
@@ -5636,37 +5541,6 @@ func TestForbidConstAssignWhenBundling(t *testing.T) {
 		},
 		expectedScanLog: `entry.js: ERROR: Cannot assign to "x" because it is a constant
 entry.js: NOTE: The symbol "x" was declared a constant here:
-entry.js: ERROR: Cannot assign to "y" because it is a constant
-entry.js: NOTE: The symbol "y" was declared a constant here:
-`,
-	})
-}
-
-// Assigning to a top-level "const" that will be transformed into a "var" must
-// be an error at compile-time because it won't be an error at run-time
-func TestForbidConstAssignWhenLoweringUsing(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				const x = 1
-				using x2 = 2
-				x = 3
-				function foo() {
-					const y = 1
-					using y2 = 2
-					y = 3
-				}
-			`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			AbsOutputFile:         "/out.js",
-			UnsupportedJSFeatures: compat.Using,
-		},
-		expectedScanLog: `entry.js: ERROR: Cannot assign to "x" because it is a constant
-entry.js: NOTE: The symbol "x" was declared a constant here:
-entry.js: WARNING: This assignment will throw because "y" is a constant
-entry.js: NOTE: The symbol "y" was declared a constant here:
 `,
 	})
 }
@@ -6537,15 +6411,15 @@ func TestEntryNamesNoSlashAfterDir(t *testing.T) {
 func TestEntryNamesNonPortableCharacter(t *testing.T) {
 	default_suite.expectBundled(t, bundled{
 		files: map[string]string{
-			"/entry1-:.ts": `console.log(1)`,
-			"/entry2-:.ts": `console.log(2)`,
+			"/entry1-*.ts": `console.log(1)`,
+			"/entry2-*.ts": `console.log(2)`,
 		},
 		entryPathsAdvanced: []bundler.EntryPoint{
-			// The ":" should turn into "_" for cross-platform Windows portability
-			{InputPath: "/entry1-:.ts"},
+			// The "*" should turn into "_" for cross-platform Windows portability
+			{InputPath: "/entry1-*.ts"},
 
-			// The ":" should be preserved since the user _really_ wants it
-			{InputPath: "/entry2-:.ts", OutputPath: "entry2-*"},
+			// The "*" should be preserved since the user _really_ wants it
+			{InputPath: "/entry2-*.ts", OutputPath: "entry2-*"},
 		},
 		options: config.Options{
 			Mode:         config.ModePassThrough,
@@ -7578,8 +7452,8 @@ func TestManglePropsKeyCommentMinify(t *testing.T) {
 				x[/* @__KEY__ */ '_mangleThisToo'] = 2
 				x['_doNotMangleThis'] = 3
 				x([
-					` + "`" + `${foo}.${/* @__KEY__ */ '_mangleThis'} = bar.${/* @__KEY__ */ '_mangleThisToo'}` + "`" + `,
-					` + "`" + `${foo}.${/* @__KEY__ */ 'notMangled'} = bar.${/* @__KEY__ */ 'notMangledEither'}` + "`" + `,
+					` + "`" + `foo.${/* @__KEY__ */ '_mangleThis'} = bar.${/* @__KEY__ */ '_mangleThisToo'}` + "`" + `,
+					` + "`" + `foo.${/* @__KEY__ */ 'notMangled'} = bar.${/* @__KEY__ */ 'notMangledEither'}` + "`" + `,
 				])
 		`,
 		},
@@ -7856,39 +7730,39 @@ func TestErrorsForAssertTypeJSON(t *testing.T) {
 				".copy": config.LoaderCopy,
 			},
 		},
-		expectedScanLog: `js-entry.js: ERROR: Cannot use non-default import "unused" with a JSON import assertion
-js-entry.js: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "unused" import.
-js-entry.js: ERROR: Cannot use non-default import "used" with a JSON import assertion
-js-entry.js: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "used" import.
-js-entry.js: WARNING: Non-default import "prop" is undefined with a JSON import assertion
-js-entry.js: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import.
-js-entry.js: ERROR: Cannot use non-default import "exported" with a JSON import assertion
-js-entry.js: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "exported" import.
-js-entry.js: ERROR: Cannot use non-default import "def3" with a JSON import assertion
-js-entry.js: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "def3" import.
+		expectedScanLog: `js-entry.js: ERROR: Cannot use non-default import "unused" with a standard JSON module
+js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "unused" import (which is non-standard behavior).
+js-entry.js: ERROR: Cannot use non-default import "used" with a standard JSON module
+js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "used" import (which is non-standard behavior).
+js-entry.js: WARNING: Non-default import "prop" is undefined with a standard JSON module
+js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+js-entry.js: ERROR: Cannot use non-default import "exported" with a standard JSON module
+js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "exported" import (which is non-standard behavior).
+js-entry.js: ERROR: Cannot use non-default import "def3" with a standard JSON module
+js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "def3" import (which is non-standard behavior).
 js-entry.js: ERROR: The file "foo.text" was loaded with the "text" loader
 js-entry.js: NOTE: This import assertion requires the loader to be "json" instead:
 NOTE: You need to either reconfigure esbuild to ensure that the loader for this file is "json" or you need to remove this import assertion.
 js-entry.js: ERROR: The file "foo.file" was loaded with the "file" loader
 js-entry.js: NOTE: This import assertion requires the loader to be "json" instead:
 NOTE: You need to either reconfigure esbuild to ensure that the loader for this file is "json" or you need to remove this import assertion.
-ts-entry.ts: ERROR: Cannot use non-default import "used" with a JSON import assertion
-ts-entry.ts: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "used" import.
-ts-entry.ts: WARNING: Non-default import "prop" is undefined with a JSON import assertion
-ts-entry.ts: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import.
-ts-entry.ts: ERROR: Cannot use non-default import "exported" with a JSON import assertion
-ts-entry.ts: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "exported" import.
-ts-entry.ts: ERROR: Cannot use non-default import "def3" with a JSON import assertion
-ts-entry.ts: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "def3" import.
+ts-entry.ts: ERROR: Cannot use non-default import "used" with a standard JSON module
+ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "used" import (which is non-standard behavior).
+ts-entry.ts: WARNING: Non-default import "prop" is undefined with a standard JSON module
+ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+ts-entry.ts: ERROR: Cannot use non-default import "exported" with a standard JSON module
+ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "exported" import (which is non-standard behavior).
+ts-entry.ts: ERROR: Cannot use non-default import "def3" with a standard JSON module
+ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "def3" import (which is non-standard behavior).
 `,
 	})
 }
@@ -7930,12 +7804,12 @@ func TestOutputForAssertTypeJSON(t *testing.T) {
 				".copy": config.LoaderCopy,
 			},
 		},
-		expectedScanLog: `js-entry.js: WARNING: Non-default import "prop" is undefined with a JSON import assertion
-js-entry.js: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import.
-ts-entry.ts: WARNING: Non-default import "prop" is undefined with a JSON import assertion
-ts-entry.ts: NOTE: The JSON import assertion is here:
-NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import.
+		expectedScanLog: `js-entry.js: WARNING: Non-default import "prop" is undefined with a standard JSON module
+js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+ts-entry.ts: WARNING: Non-default import "prop" is undefined with a standard JSON module
+ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
 `,
 	})
 }
@@ -8115,26 +7989,6 @@ func TestMetafileVeryLongExternalPaths(t *testing.T) {
 	})
 }
 
-func TestMetafileImportWithTypeJSON(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/project/entry.js": `
-				import a from './data.json'
-				import b from './data.json' assert { type: 'json' }
-				import c from './data.json' with { type: 'json' }
-				x = [a, b, c]
-			`,
-			"/project/data.json": `{"some": "data"}`,
-		},
-		entryPaths: []string{"/project/entry.js"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputDir:  "/out",
-			NeedsMetafile: true,
-		},
-	})
-}
-
 func TestCommentPreservation(t *testing.T) {
 	default_suite.expectBundled(t, bundled{
 		files: map[string]string{
@@ -8290,8 +8144,9 @@ func TestCommentPreservation(t *testing.T) {
 		},
 		entryPaths: []string{"/entry.js"},
 		options: config.Options{
-			Mode:         config.ModePassThrough,
+			Mode:         config.ModeBundle,
 			AbsOutputDir: "/out",
+			OutputFormat: config.FormatCommonJS,
 			ExternalSettings: config.ExternalSettings{
 				PreResolve: config.ExternalMatchers{
 					Exact: map[string]bool{"foo": true},
@@ -8416,398 +8271,7 @@ func TestErrorMessageCrashStdinIssue2913(t *testing.T) {
 			AbsOutputDir: "/out",
 		},
 		expectedScanLog: `<stdin>: ERROR: Could not resolve "node_modules/fflate"
-NOTE: You can mark the path "node_modules/fflate" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+NOTE: You can mark the path "node_modules/fflate" as external to exclude it from the bundle, which will remove this error.
 `,
-	})
-}
-
-func TestLineLimitNotMinified(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/script.jsx": `
-				import fileURL from './x.file'
-				import copyURL from './x.copy'
-				import dataURL from './x.data'
-				export const SignUpForm = (props) => {
-					return <p class="signup">
-						<label>Username: <input class="username" type="text"/></label>
-						<label>Password: <input class="password" type="password"/></label>
-						<div class="primary disabled">
-							{props.buttonText}
-						</div>
-						<small>By signing up, you are agreeing to our <a href="/tos/">terms of service</a>.</small>
-						<img src={fileURL} />
-						<img src={copyURL} />
-						<img src={dataURL} />
-					</p>
-				}
-			`,
-			"/style.css": `
-				body.light-mode.new-user-segment:not(.logged-in) .signup,
-				body.light-mode.new-user-segment:not(.logged-in) .login {
-					font: 10px/12px 'Font 1', 'Font 2', 'Font 3', 'Font 4', sans-serif;
-					user-select: none;
-					color: var(--fg, rgba(11, 22, 33, 0.5));
-					background: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sb` +
-				`nM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8Y2lyY2xlIGN4PSIxMDAiIGN5PSIxMDAiIHI9IjEwM` +
-				`CIgZmlsbD0iI0ZGQ0YwMCIvPgogIDxwYXRoIGQ9Ik00Ny41IDUyLjVMOTUgMTAwbC00Ny41IDQ3LjVtNjAtOTVMM` +
-				`TU1IDEwMGwtNDcuNSA0Ny41IiBmaWxsPSJub25lIiBzdHJva2U9IiMxOTE5MTkiIHN0cm9rZS13aWR0aD0iMjQiL` +
-				`z4KPC9zdmc+Cg==);
-					cursor: url(x.file);
-					cursor: url(x.copy);
-					cursor: url(x.data);
-				}
-			`,
-			"/x.file": `...file...`,
-			"/x.copy": `...copy...`,
-			"/x.data": `...lots of long data...lots of long data...`,
-		},
-		entryPaths: []string{
-			"/script.jsx",
-			"/style.css",
-		},
-		options: config.Options{
-			Mode:         config.ModeBundle,
-			AbsOutputDir: "/out",
-			LineLimit:    32,
-			ExtensionToLoader: map[string]config.Loader{
-				".jsx":  config.LoaderJSX,
-				".css":  config.LoaderCSS,
-				".file": config.LoaderFile,
-				".copy": config.LoaderCopy,
-				".data": config.LoaderDataURL,
-			},
-		},
-	})
-}
-
-func TestLineLimitMinified(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/script.jsx": `
-				export const SignUpForm = (props) => {
-					return <p class="signup">
-						<label>Username: <input class="username" type="text"/></label>
-						<label>Password: <input class="password" type="password"/></label>
-						<div class="primary disabled">
-							{props.buttonText}
-						</div>
-						<small>By signing up, you are agreeing to our <a href="/tos/">terms of service</a>.</small>
-					</p>
-				}
-			`,
-			"/style.css": `
-				body.light-mode.new-user-segment:not(.logged-in) .signup,
-				body.light-mode.new-user-segment:not(.logged-in) .login {
-					font: 10px/12px 'Font 1', 'Font 2', 'Font 3', 'Font 4', sans-serif;
-					user-select: none;
-					color: var(--fg, rgba(11, 22, 33, 0.5));
-					background: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sb` +
-				`nM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8Y2lyY2xlIGN4PSIxMDAiIGN5PSIxMDAiIHI9IjEwM` +
-				`CIgZmlsbD0iI0ZGQ0YwMCIvPgogIDxwYXRoIGQ9Ik00Ny41IDUyLjVMOTUgMTAwbC00Ny41IDQ3LjVtNjAtOTVMM` +
-				`TU1IDEwMGwtNDcuNSA0Ny41IiBmaWxsPSJub25lIiBzdHJva2U9IiMxOTE5MTkiIHN0cm9rZS13aWR0aD0iMjQiL` +
-				`z4KPC9zdmc+Cg==);
-				}
-			`,
-		},
-		entryPaths: []string{
-			"/script.jsx",
-			"/style.css",
-		},
-		options: config.Options{
-			AbsOutputDir:     "/out",
-			LineLimit:        32,
-			MinifyWhitespace: true,
-		},
-	})
-}
-
-func TestBadImportErrorMessageWithHandlesImportErrorsFlag(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				import('foo')
-				import('foo')
-				import('foo').catch()
-				import('foo').catch()
-
-				import('bar').catch()
-				import('bar').catch()
-				import('bar') // We should get an error report here even though the earlier imports have the "HandlesImportErrors" flag
-				import('bar')
-
-				import('baz').catch()
-				import('baz').catch()
-			`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/out.js",
-		},
-		expectedScanLog: `entry.js: ERROR: Could not resolve "foo"
-NOTE: You can mark the path "foo" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle. You can also add ".catch()" here to handle this failure at run-time instead of bundle-time.
-entry.js: ERROR: Could not resolve "bar"
-NOTE: You can mark the path "bar" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle. You can also add ".catch()" here to handle this failure at run-time instead of bundle-time.
-`,
-	})
-}
-
-func TestDecoratorPrintingESM(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				import { constant } from './constants'
-				import { imported } from 'somewhere'
-				import { undef } from './empty'
-
-				_ = class Outer {
-					#bar;
-
-					classes = [
-						class { @imported @imported() imported },
-						class { @unbound @unbound() unbound },
-						class { @constant @constant() constant },
-						class { @undef @undef() undef },
-
-						class { @(element[access]) indexed },
-						class { @foo.#bar private },
-						class { @foo.\u30FF unicode },
-						class { @(() => {}) arrow },
-					]
-				}
-			`,
-			"/constants.js": `
-				export const constant = 123
-			`,
-			"/empty.js": ``,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:             config.ModeBundle,
-			OutputFormat:     config.FormatESModule,
-			AbsOutputFile:    "/out.js",
-			ExternalPackages: true,
-			MinifySyntax:     true,
-		},
-		expectedCompileLog: `entry.js: WARNING: Import "undef" will always be undefined because the file "empty.js" has no exports
-`,
-	})
-}
-
-func TestDecoratorPrintingCJS(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				import { constant } from './constants'
-				import { imported } from 'somewhere'
-				import { undef } from './empty'
-
-				_ = class Outer {
-					#bar;
-
-					classes = [
-						class { @imported @imported() imported },
-						class { @unbound @unbound() unbound },
-						class { @constant @constant() constant },
-						class { @undef @undef() undef },
-
-						class { @(element[access]) indexed },
-						class { @foo.#bar private },
-						class { @foo.\u30FF unicode },
-						class { @(() => {}) arrow },
-					]
-				}
-			`,
-			"/constants.js": `
-				export const constant = 123
-			`,
-			"/empty.js": ``,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:             config.ModeBundle,
-			OutputFormat:     config.FormatCommonJS,
-			AbsOutputFile:    "/out.js",
-			ExternalPackages: true,
-			MinifySyntax:     true,
-		},
-		expectedCompileLog: `entry.js: WARNING: Import "undef" will always be undefined because the file "empty.js" has no exports
-`,
-	})
-}
-
-// React's development-mode transform has a special "__self" value that's sort
-// of supposed to be set to "this". Except there's no specification for it
-// AFAIK and the value of "this" isn't always allowed to be accessed. For
-// example, accessing it before "super()" in a constructor call will crash.
-//
-// From what I understand the React team wanted to have it in case they need it
-// for some run-time warnings, but having it be accurate in all cases doesn't
-// really matter. For example, I'm not sure if it needs to even be any value in
-// particular for top-level JSX elements (top-level "this" can technically be
-// the module's exports object, which could materialize a lot of code to
-// generate one when bundling, so Facebook probably doesn't want that to
-// happen?).
-//
-// Anyway, this test case documents what esbuild does in case a specification
-// is produced in the future and it turns out esbuild should be doing something
-// else.
-func TestJSXDevSelfEdgeCases(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/function-this.jsx":             `export function Foo() { return <div/> }`,
-			"/class-this.jsx":                `export class Foo { foo() { return <div/> } }`,
-			"/normal-constructor.jsx":        `export class Foo { constructor() { this.foo = <div/> } }`,
-			"/derived-constructor.jsx":       `export class Foo extends Object { constructor() { super(<div/>); this.foo = <div/> } }`,
-			"/normal-constructor-arg.jsx":    `export class Foo { constructor(foo = <div/>) {} }`,
-			"/derived-constructor-arg.jsx":   `export class Foo extends Object { constructor(foo = <div/>) { super() } }`,
-			"/normal-constructor-field.tsx":  `export class Foo { foo = <div/> }`,
-			"/derived-constructor-field.tsx": `export class Foo extends Object { foo = <div/> }`,
-			"/static-field.jsx":              `export class Foo { static foo = <div/> }`,
-			"/top-level-this-esm.jsx":        `export let foo = <div/>; if (Foo) { foo = <Foo>nested top-level this</Foo> }`,
-			"/top-level-this-cjs.jsx":        `exports.foo = <div/>`,
-			"/typescript-namespace.tsx":      `export namespace Foo { export let foo = <div/> }`,
-			"/typescript-enum.tsx":           `export enum Foo { foo = <div/> }`,
-			"/tsconfig.json":                 `{ "compilerOptions": { "useDefineForClassFields": false } }`,
-		},
-		entryPaths: []string{"*"},
-		options: config.Options{
-			Mode:         config.ModeBundle,
-			AbsOutputDir: "/out",
-			JSX: config.JSXOptions{
-				AutomaticRuntime: true,
-				Development:      true,
-			},
-			UnsupportedJSFeatures: compat.ClassStaticField,
-			ExternalSettings: config.ExternalSettings{
-				PreResolve: config.ExternalMatchers{
-					Exact: map[string]bool{
-						"react/jsx-dev-runtime": true,
-					},
-				},
-			},
-		},
-	})
-}
-
-func TestObjectLiteralProtoSetterEdgeCases(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/local-shorthand.js": `
-				function foo(__proto__, bar) {
-					{
-						let __proto__, bar // These locals will be renamed
-						console.log(
-							'this must not become "{ __proto__: ... }":',
-							{
-								__proto__,
-								bar,
-							},
-						)
-					}
-				}
-			`,
-			"/local-normal.js": `
-				function foo(__proto__, bar) {
-					console.log(
-						'this must not become "{ __proto__ }":',
-						{
-							__proto__: __proto__,
-							bar: bar,
-						},
-					)
-				}
-			`,
-			"/import-shorthand.js": `
-				import { __proto__, bar } from 'foo'
-				function foo() {
-					console.log(
-						'this must not become "{ __proto__: ... }":',
-						{
-							__proto__,
-							bar,
-						},
-					)
-				}
-			`,
-			"/import-normal.js": `
-				import { __proto__, bar } from 'foo'
-				function foo() {
-					console.log(
-						'this must not become "{ __proto__ }":',
-						{
-							__proto__: __proto__,
-							bar: bar,
-						},
-					)
-				}
-			`,
-		},
-		entryPaths: []string{"*"},
-		options: config.Options{
-			AbsOutputDir: "/out",
-		},
-	})
-}
-
-func TestObjectLiteralProtoSetterEdgeCasesMinifySyntax(t *testing.T) {
-	default_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/local-computed.js": `
-				function foo(__proto__, bar) {
-					{
-						let __proto__, bar // These locals will be renamed
-						console.log(
-							'this must not become "{ __proto__: ... }":',
-							{
-								['__proto__']: __proto__,
-								['bar']: bar,
-							},
-						)
-					}
-				}
-			`,
-			"/local-normal.js": `
-				function foo(__proto__, bar) {
-					console.log(
-						'this must not become "{ __proto__ }":',
-						{
-							__proto__: __proto__,
-							bar: bar,
-						},
-					)
-				}
-			`,
-			"/import-computed.js": `
-				import { __proto__, bar } from 'foo'
-				function foo() {
-					console.log(
-						'this must not become "{ __proto__: ... }":',
-						{
-							['__proto__']: __proto__,
-							['bar']: bar,
-						},
-					)
-				}
-			`,
-			"/import-normal.js": `
-				import { __proto__, bar } from 'foo'
-				function foo() {
-					console.log(
-						'this must not become "{ __proto__ }":',
-						{
-							__proto__: __proto__,
-							bar: bar,
-						},
-					)
-				}
-			`,
-		},
-		entryPaths: []string{"*"},
-		options: config.Options{
-			AbsOutputDir: "/out",
-			MinifySyntax: true,
-		},
 	})
 }

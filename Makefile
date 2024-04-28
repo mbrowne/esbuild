@@ -20,7 +20,7 @@ test-all:
 	@$(MAKE) --no-print-directory -j6 test-common test-deno ts-type-tests test-wasm-node test-wasm-browser lib-typecheck test-yarnpnp
 
 check-go-version:
-	@go version | grep ' go1\.20\.12 ' || (echo 'Please install Go version 1.20.12' && false)
+	@go version | grep ' go1\.20\.5 ' || (echo 'Please install Go version 1.20.5' && false)
 
 # Note: Don't add "-race" here by default. The Go race detector is currently
 # only supported on the following configurations:
@@ -107,13 +107,10 @@ test-old-ts: platform-neutral | require/old-ts/node_modules
 node-unref-tests: | scripts/node_modules
 	node scripts/node-unref-tests.js
 
-lib-typecheck: lib-typecheck-node lib-typecheck-node-nolib lib-typecheck-deno
+lib-typecheck: lib-typecheck-node lib-typecheck-deno
 
 lib-typecheck-node: | lib/node_modules
 	cd lib && node_modules/.bin/tsc -noEmit -p tsconfig.json
-
-lib-typecheck-node-nolib: | lib/node_modules
-	cd lib && node_modules/.bin/tsc -noEmit -p tsconfig-nolib.json
 
 lib-typecheck-deno: lib/deno/lib.deno.d.ts | lib/node_modules
 	cd lib && node_modules/.bin/tsc -noEmit -p tsconfig-deno.json
@@ -122,7 +119,7 @@ lib/deno/lib.deno.d.ts:
 	deno types > lib/deno/lib.deno.d.ts
 
 # End-to-end tests
-test-e2e: test-e2e-npm test-e2e-pnpm test-e2e-yarn test-e2e-yarn-berry test-e2e-deno
+test-e2e: test-e2e-npm test-e2e-pnpm test-e2e-yarn-berry test-e2e-deno
 
 test-e2e-npm:
 	# Test normal install
@@ -192,31 +189,6 @@ test-e2e-pnpm:
 	# Clean up
 	rm -fr e2e-pnpm
 
-test-e2e-yarn:
-	# Test normal install
-	rm -fr e2e-yarn && mkdir e2e-yarn && cd e2e-yarn && echo {} > package.json && touch yarn.lock && yarn set version classic && yarn add esbuild
-	cd e2e-yarn && echo "1+2" | yarn esbuild && yarn node -p "require('esbuild').transformSync('1+2').code"
-	# Test CI reinstall
-	cd e2e-yarn && rm -fr node_modules && yarn install --immutable
-	cd e2e-yarn && echo "1+2" | yarn esbuild && yarn node -p "require('esbuild').transformSync('1+2').code"
-
-	# Test install without scripts
-	rm -fr e2e-yarn && mkdir e2e-yarn && cd e2e-yarn && echo {} > package.json && touch yarn.lock && echo 'enableScripts: false' > .yarnrc.yml && yarn set version classic && yarn add esbuild
-	cd e2e-yarn && echo "1+2" | yarn esbuild && yarn node -p "require('esbuild').transformSync('1+2').code"
-	# Test CI reinstall
-	cd e2e-yarn && rm -fr node_modules && yarn install --immutable
-	cd e2e-yarn && echo "1+2" | yarn esbuild && yarn node -p "require('esbuild').transformSync('1+2').code"
-
-	# Test install without optional dependencies
-	rm -fr e2e-yarn && mkdir e2e-yarn && cd e2e-yarn && echo {} > package.json && touch yarn.lock && yarn set version classic && yarn add esbuild
-	cd e2e-yarn && echo "1+2" | yarn esbuild && yarn node -p "require('esbuild').transformSync('1+2').code"
-	# Test CI reinstall
-	cd e2e-yarn && rm -fr node_modules && yarn install --immutable --ignore-optional
-	cd e2e-yarn && echo "1+2" | yarn esbuild && yarn node -p "require('esbuild').transformSync('1+2').code"
-
-	# Clean up
-	rm -fr e2e-yarn
-
 test-e2e-yarn-berry:
 	# Test normal install
 	rm -fr e2e-yb && mkdir e2e-yb && cd e2e-yb && echo {} > package.json && touch yarn.lock && yarn set version berry && yarn add esbuild
@@ -274,7 +246,6 @@ version-go:
 
 platform-all:
 	@$(MAKE) --no-print-directory -j4 \
-		platform-aix-ppc64 \
 		platform-android-arm \
 		platform-android-arm64 \
 		platform-android-x64 \
@@ -325,9 +296,6 @@ platform-android-x64: platform-wasm
 
 platform-android-arm: platform-wasm
 	node scripts/esbuild.js npm/@esbuild/android-arm/package.json --version
-
-platform-aix-ppc64:
-	@$(MAKE) --no-print-directory GOOS=aix GOARCH=ppc64 NPMDIR=npm/@esbuild/aix-ppc64 platform-unixlike
 
 platform-android-arm64:
 	@$(MAKE) --no-print-directory GOOS=android GOARCH=arm64 NPMDIR=npm/@esbuild/android-arm64 platform-unixlike
@@ -450,7 +418,6 @@ publish-all: check-go-version
 
 	@echo Enter one-time password:
 	@read OTP && OTP="$$OTP" $(MAKE) --no-print-directory -j4 \
-		publish-aix-ppc64 \
 		publish-linux-ppc64 \
 		publish-linux-s390x
 
@@ -472,9 +439,6 @@ publish-win32-ia32: platform-win32-ia32
 
 publish-win32-arm64: platform-win32-arm64
 	test -n "$(OTP)" && cd npm/@esbuild/win32-arm64 && npm publish --otp="$(OTP)"
-
-publish-aix-ppc64: platform-aix-ppc64
-	test -n "$(OTP)" && cd npm/@esbuild/aix-ppc64 && npm publish --otp="$(OTP)"
 
 publish-android-x64: platform-android-x64
 	test -n "$(OTP)" && cd npm/@esbuild/android-x64 && npm publish --otp="$(OTP)"
@@ -574,7 +538,6 @@ validate-build:
 # This checks that the published binaries are bitwise-identical to the locally-build binaries
 validate-builds:
 	git fetch --all --tags && git checkout "v$(ESBUILD_VERSION)"
-	@$(MAKE) --no-print-directory TARGET=platform-aix-ppc64      SCOPE=@esbuild/ PACKAGE=aix-ppc64       SUBPATH=bin/esbuild  validate-build
 	@$(MAKE) --no-print-directory TARGET=platform-android-arm    SCOPE=@esbuild/ PACKAGE=android-arm     SUBPATH=esbuild.wasm validate-build
 	@$(MAKE) --no-print-directory TARGET=platform-android-arm64  SCOPE=@esbuild/ PACKAGE=android-arm64   SUBPATH=bin/esbuild  validate-build
 	@$(MAKE) --no-print-directory TARGET=platform-android-x64    SCOPE=@esbuild/ PACKAGE=android-x64     SUBPATH=esbuild.wasm validate-build
@@ -607,7 +570,6 @@ clean:
 	rm -f npm/@esbuild/win32-ia32/esbuild.exe
 	rm -f npm/@esbuild/win32-x64/esbuild.exe
 	rm -f npm/esbuild-wasm/esbuild.wasm npm/esbuild-wasm/wasm_exec*.js
-	rm -rf npm/@esbuild/aix-ppc64/bin
 	rm -rf npm/@esbuild/android-arm/bin npm/@esbuild/android-arm/esbuild.wasm npm/@esbuild/android-arm/wasm_exec*.js
 	rm -rf npm/@esbuild/android-arm64/bin
 	rm -rf npm/@esbuild/android-x64/bin npm/@esbuild/android-x64/esbuild.wasm npm/@esbuild/android-x64/wasm_exec*.js
@@ -663,16 +625,18 @@ scripts/browser/node_modules:
 	cd scripts/browser && npm ci
 
 ################################################################################
-# This generates browser support mappings
+# This downloads the kangax compat-table and generates browser support mappings
 
-compat-table: esbuild
-	./esbuild compat-table/src/index.ts --bundle --platform=node --external:./compat-table/repos/* --outfile=compat-table/out.js --log-level=warning --sourcemap
-	node --enable-source-maps compat-table/out.js
+github/compat-table:
+	mkdir -p github/compat-table
+	git clone --depth 1 https://github.com/kangax/compat-table.git github/compat-table
 
-update-compat-table: esbuild
-	cd compat-table && npm i @mdn/browser-compat-data@latest caniuse-lite@latest --silent
-	./esbuild compat-table/src/index.ts --bundle --platform=node --external:./compat-table/repos/* --outfile=compat-table/out.js --log-level=warning --sourcemap
-	node --enable-source-maps compat-table/out.js --update
+github/node-compat-table:
+	mkdir -p github/node-compat-table
+	git clone --depth 1 https://github.com/williamkapke/node-compat-table.git github/node-compat-table
+
+compat-table: | github/compat-table github/node-compat-table
+	node scripts/compat-table.js
 
 ################################################################################
 # This runs the test262 official JavaScript test suite through esbuild
@@ -688,9 +652,6 @@ demo/test262: | github/test262
 
 test262: esbuild | demo/test262
 	node --experimental-vm-modules scripts/test262.js
-
-test262-async: esbuild | demo/test262
-	node --experimental-vm-modules scripts/test262-async.js
 
 ################################################################################
 # This runs UglifyJS's test suite through esbuild
@@ -1059,15 +1020,9 @@ bench-rome-parcel2: | require/parcel2/node_modules bench/rome bench/rome-verify
 
 	# Inject aliases into "package.json" to fix Parcel 2 ignoring "tsconfig.json".
 	# Also inject "engines": "node" to avoid Parcel 2 mangling node globals.
-	# Also inject "includeNodeModules": true or the aliases will be ignored.
 	cat require/parcel2/package.json | sed '/^\}/d' > bench/rome/parcel2/package.json
 	echo ', "engines": { "node": "14.0.0" }' >> bench/rome/parcel2/package.json
-	echo ', "targets": { "main": { "includeNodeModules": true, "optimize": true } }' >> bench/rome/parcel2/package.json
 	echo ', $(ROME_PARCEL_ALIASES) }' >> bench/rome/parcel2/package.json
-
-	# Parcel's minifier preserves all comments in the source code by default.
-	# Removing comments in the minified output requires a config file.
-	echo '{ "format": { "comments": false } }' > bench/rome/parcel2/.terserrc
 
 	cd bench/rome/parcel2 && time -p node_modules/.bin/parcel build entry.ts --dist-dir . --cache-dir .cache
 	du -h bench/rome/parcel2/entry.js*

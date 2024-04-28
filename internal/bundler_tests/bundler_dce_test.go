@@ -1222,31 +1222,6 @@ func TestRemoveUnusedPureCommentCalls(t *testing.T) {
 	})
 }
 
-func TestRemoveUnusedNoSideEffectsTaggedTemplates(t *testing.T) {
-	dce_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				// @__NO_SIDE_EFFECTS__
-				function foo() {}
-
-				foo` + "`remove`" + `;
-				foo` + "`remove${null}`" + `;
-				foo` + "`remove${123}`" + `;
-
-				use(foo` + "`keep`" + `);
-				foo` + "`remove this part ${keep} and this ${alsoKeep}`" + `;
-				` + "`remove this part ${keep} and this ${alsoKeep}`" + `;
-			`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/out.js",
-			MinifySyntax:  true,
-		},
-	})
-}
-
 func TestTreeShakingReactElements(t *testing.T) {
 	dce_suite.expectBundled(t, bundled{
 		files: map[string]string{
@@ -1273,8 +1248,8 @@ func TestTreeShakingReactElements(t *testing.T) {
 
 func TestDisableTreeShaking(t *testing.T) {
 	defines := config.ProcessDefines(map[string]config.DefineData{
-		"pure":    {Flags: config.CallCanBeUnwrappedIfUnused},
-		"some.fn": {Flags: config.CallCanBeUnwrappedIfUnused},
+		"pure":    {CallCanBeUnwrappedIfUnused: true},
+		"some.fn": {CallCanBeUnwrappedIfUnused: true},
 	})
 	dce_suite.expectBundled(t, bundled{
 		files: map[string]string{
@@ -2874,13 +2849,6 @@ func TestConstValueInliningNoBundle(t *testing.T) {
 					)
 				}
 			`,
-			"/issue-3125.js": `
-				function foo() {
-					const f = () => x
-					const x = 0
-					return f()
-				}
-			`,
 		},
 		entryPaths: []string{
 			"/top-level.js",
@@ -2898,7 +2866,6 @@ func TestConstValueInliningNoBundle(t *testing.T) {
 			"/disabled-tdz.js",
 			"/backwards-reference-top-level.js",
 			"/backwards-reference-nested-function.js",
-			"/issue-3125.js",
 		},
 		options: config.Options{
 			Mode:         config.ModePassThrough,
@@ -4327,8 +4294,6 @@ func TestDCEOfIIFE(t *testing.T) {
 				(() => { /* @__PURE__ */ removeMe() })();
 				var someVar;
 				(x => {})(someVar);
-				var removeThis = /* @__PURE__ */ (() => stuff())();
-				var removeThis2 = (() => 123)();
 			`,
 			"/keep-these.js": `
 				undef = (() => {})();
@@ -4337,15 +4302,6 @@ func TestDCEOfIIFE(t *testing.T) {
 				var someVar;
 				(([y]) => {})(someVar);
 				(({z}) => {})(someVar);
-				var keepThis = /* @__PURE__ */ (() => stuff())();
-				keepThis();
-				((_ = keepMe()) => {})();
-				var isPure = ((x, y) => 123)();
-				use(isPure);
-				var isNotPure = ((x = foo, y = bar) => 123)();
-				use(isNotPure);
-				(async () => ({ get then() { notPure() } }))();
-				(async function() { return { get then() { notPure() } }; })();
 			`,
 		},
 		entryPaths: []string{
@@ -4356,275 +4312,6 @@ func TestDCEOfIIFE(t *testing.T) {
 			AbsOutputDir: "/out",
 			MinifySyntax: true,
 			TreeShaking:  true,
-		},
-	})
-}
-
-func TestDCEOfDestructuring(t *testing.T) {
-	dce_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				// Identifier bindings
-				var remove1
-				var remove2 = null
-				var KEEP1 = x
-
-				// Array patterns
-				var [remove3] = []
-				var [remove4, ...remove5] = [...[1, 2], 3]
-				var [, , remove6] = [, , 3]
-				var [KEEP2] = [x]
-				var [KEEP3] = [...{}]
-
-				// Object patterns (not handled right now)
-				var { KEEP4 } = {}
-			`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:         config.ModeBundle,
-			AbsOutputDir: "/out",
-		},
-	})
-}
-
-func TestDCEOfDecorators(t *testing.T) {
-	dce_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/keep-these.js": `
-				import { fn } from './decorator'
-				@fn class Class {}
-				class Field { @fn field }
-				class Method { @fn method() {} }
-				class Accessor { @fn accessor accessor }
-				class StaticField { @fn static field }
-				class StaticMethod { @fn static method() {} }
-				class StaticAccessor { @fn static accessor accessor }
-			`,
-			"/decorator.js": `
-				export const fn = () => {
-					console.log('side effect')
-				}
-			`,
-		},
-		entryPaths: []string{"/keep-these.js"},
-		options: config.Options{
-			Mode:         config.ModeBundle,
-			AbsOutputDir: "/out",
-		},
-	})
-}
-
-func TestDCEOfExperimentalDecorators(t *testing.T) {
-	dce_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/keep-these.ts": `
-				import { fn } from './decorator'
-				@fn class Class {}
-				class Field { @fn field }
-				class Method { @fn method() {} }
-				class Accessor { @fn accessor accessor }
-				class Parameter { foo(@fn bar) {} }
-				class StaticField { @fn static field }
-				class StaticMethod { @fn static method() {} }
-				class StaticAccessor { @fn static accessor accessor }
-				class StaticParameter { static foo(@fn bar) {} }
-			`,
-			"/decorator.ts": `
-				export const fn = () => {
-					console.log('side effect')
-				}
-			`,
-			"/tsconfig.json": `{
-				"compilerOptions": {
-					"experimentalDecorators": true
-				}
-			}`,
-		},
-		entryPaths: []string{"/keep-these.ts"},
-		options: config.Options{
-			Mode:         config.ModeBundle,
-			AbsOutputDir: "/out",
-		},
-	})
-}
-
-func TestDCEOfUsingDeclarations(t *testing.T) {
-	dce_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				// Note: Only remove "using" if it's null or undefined and not awaited
-
-				using null_remove = null
-				using null_keep = null
-				await using await_null_keep = null
-
-				// This has a side effect: throwing an error
-				using throw_keep = {}
-
-				using dispose_keep = { [Symbol.dispose]() { console.log('side effect') } }
-				await using await_asyncDispose_keep = { [Symbol.asyncDispose]() { console.log('side effect') } }
-
-				using undef_remove = undefined
-				using undef_keep = undefined
-				await using await_undef_keep = undefined
-
-				// Assume these have no side effects
-				const Symbol_dispose_remove = Symbol.dispose
-				const Symbol_asyncDispose_remove = Symbol.asyncDispose
-
-				console.log(
-					null_keep,
-					undef_keep,
-				)
-			`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:         config.ModeBundle,
-			TreeShaking:  true,
-			AbsOutputDir: "/out",
-		},
-	})
-}
-
-func TestDCEOfExprAfterKeepNamesIssue3195(t *testing.T) {
-	dce_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				(() => {
-					function f() {}
-					firstImportantSideEffect(f());
-				})();
-				(() => {
-					function g() {}
-					debugger;
-					secondImportantSideEffect(g());
-				})();
-			`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			MinifySyntax:  true,
-			KeepNames:     true,
-			AbsOutputFile: "/out.js",
-		},
-	})
-}
-
-func TestDropLabels(t *testing.T) {
-	dce_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				keep_1: require('foo1')
-				DROP_1: require('bar1')
-				exports.bar = function() {
-					if (x) DROP_2: require('foo2')
-					if (y) keep_2: require('bar2')
-				}
-			`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode: config.ModeBundle,
-			DropLabels: []string{
-				"DROP_1",
-				"DROP_2",
-			},
-			ExternalSettings: config.ExternalSettings{
-				PreResolve: config.ExternalMatchers{
-					Exact: map[string]bool{
-						"foo1": true,
-						"bar2": true,
-					},
-				},
-			},
-			AbsOutputFile: "/out.js",
-			OutputFormat:  config.FormatCommonJS,
-		},
-	})
-}
-
-func TestRemoveCodeAfterLabelWithReturn(t *testing.T) {
-	dce_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				function earlyReturn() {
-					// This comes up when doing conditional compilation with "DropLabels"
-					keep: {
-						onlyWithKeep()
-						return
-					}
-					onlyWithoutKeep()
-				}
-				function loop() {
-					if (foo()) {
-						keep: {
-							bar()
-							return;
-						}
-					}
-				}
-			`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			AbsOutputFile: "/out.js",
-			MinifySyntax:  true,
-		},
-	})
-}
-
-func TestDropLabelTreeShakingBugIssue3311(t *testing.T) {
-	dce_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/entry.js": `
-				const myFunc = ()=> {
-					DROP: {console.log("drop")}
-					console.log("keep")
-				}
-				export default myFunc
-			`,
-		},
-		entryPaths: []string{"/entry.js"},
-		options: config.Options{
-			Mode:          config.ModeBundle,
-			AbsOutputFile: "/out.js",
-			DropLabels:    []string{"DROP"},
-			OutputFormat:  config.FormatESModule,
-		},
-	})
-}
-
-func TestDCEOfSymbolInstances(t *testing.T) {
-	dce_suite.expectBundled(t, bundled{
-		files: map[string]string{
-			"/class.js": `
-				class Remove1 {}
-				class Remove2 { *[Symbol.iterator]() {} }
-				class Remove3 { *[Symbol['iterator']]() {} }
-
-				class Keep1 { *[Symbol.iterator]() {} [keep] }
-				class Keep2 { [keep]; *[Symbol.iterator]() {} }
-				class Keep3 { *[Symbol.wtf]() {} }
-			`,
-			"/object.js": `
-				let remove1 = {}
-				let remove2 = { *[Symbol.iterator]() {} }
-				let remove3 = { *[Symbol['iterator']]() {} }
-
-				let keep1 = { *[Symbol.iterator]() {}, [keep]: null }
-				let keep2 = { [keep]: null, *[Symbol.iterator]() {} }
-				let keep3 = { *[Symbol.wtf]() {} }
-			`,
-		},
-		entryPaths: []string{
-			"/class.js",
-			"/object.js",
-		},
-		options: config.Options{
-			Mode:         config.ModeBundle,
-			AbsOutputDir: "/out",
 		},
 	})
 }

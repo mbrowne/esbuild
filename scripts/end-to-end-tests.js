@@ -70,9 +70,8 @@ tests.push(
   }),
 )
 
-// Test TypeScript enum stuff
+// Test TypeScript enum scope merging
 tests.push(
-  // Scope merging
   test(['entry.ts', '--bundle', '--minify', '--outfile=node.js'], {
     'entry.ts': `
       const id = x => x
@@ -143,40 +142,6 @@ tests.push(
       namespace x { export const z = y * 3 }
       namespace x { bar = z }
       if (foo !== 1 || bar !== 3) throw 'fail'
-    `,
-  }),
-
-  // https://github.com/evanw/esbuild/issues/3205
-  test(['entry.ts', '--outfile=node.js'], {
-    'entry.ts': `
-      // Note: The parentheses are important here
-      let x = (() => {
-        const enum E { a = 123 }
-        return () => E.a
-      })
-      if (x()() !== 123) throw 'fail'
-    `,
-  }),
-
-  // https://github.com/evanw/esbuild/issues/3210
-  test(['entry.ts', '--bundle', '--outfile=node.js'], {
-    'entry.ts': `
-      import { MyEnum } from './enums';
-      enum MyEnum2 {
-        'A.A' = 'a',
-        'aa' = 'aa',
-      }
-      if (
-        MyEnum['A.A'] !== 'a' || MyEnum2['A.A'] !== 'a' ||
-        MyEnum.aa !== 'aa' || MyEnum2['aa'] !== 'aa' ||
-        MyEnum['aa'] !== 'aa' || MyEnum2.aa !== 'aa'
-      ) throw 'fail'
-    `,
-    'enums.ts': `
-      export enum MyEnum {
-        'A.A' = 'a',
-        'aa' = 'aa',
-      }
     `,
   }),
 )
@@ -559,471 +524,66 @@ tests.push(
   }),
 )
 
-// Check async generator lowering
-for (const flags of [[], ['--target=es6', '--target=es2017', '--supported:async-generator=false', '--supported:async-await=false']]) {
-  tests.push(
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        function* x() {
-          yield 1
-          yield 2
-          return 3
-        }
-        async function y(arg) {
-          return -(await Promise.resolve(arg))
-        }
-        async function* z(arg) {
-          yield 1
-          yield Promise.resolve(2)
-          yield* [3, Promise.resolve(4)]
-          yield* {
-            [Symbol.iterator]() {
-              var value = 5
-              return { next: () => ({ value, done: value++ > 6 }) }
+// Check for await lowering
+tests.push(
+  // return() must not be called in this case (TypeScript has this bug: https://github.com/microsoft/TypeScript/issues/50525)
+  test(['in.js', '--outfile=node.js', '--target=es6'], {
+    'in.js': `
+      let pass = true
+      async function f() {
+        const y = {
+          [Symbol.asyncIterator]() {
+            let count = 0
+            return {
+              async next() {
+                count++
+                if (count === 2) throw 'error'
+                return { value: count }
+              },
+              async return() {
+                pass = false
+              },
             }
-          }
-          yield* {
-            [Symbol.asyncIterator]() {
-              var value = 7
-              return { next: async () => ({ value, done: value++ > 8 }) }
+          },
+        }
+        for await (let x of y) {
+        }
+      }
+      f().catch(() => {
+        if (!pass) throw 'fail'
+      })
+    `,
+  }),
+
+  // return() must be called in this case
+  test(['in.js', '--outfile=node.js', '--target=es6'], {
+    'in.js': `
+      let pass = false
+      async function f() {
+        const y = {
+          [Symbol.asyncIterator]() {
+            let count = 0
+            return {
+              async next() {
+                count++
+                return { value: count }
+              },
+              async return() {
+                pass = true
+              },
             }
-          }
-          return -(await Promise.resolve(arg))
+          },
         }
-        export let async = async () => {
-          let state
-
-          const X = x()
-          if (X[Symbol.iterator]() !== X) throw 'fail: x Symbol.iterator'
-          if (Symbol.asyncIterator in X) throw 'fail: x Symbol.asyncIterator'
-          state = X.next(); if (state.done !== false || state.value !== 1) throw 'fail: x 1: ' + JSON.stringify(state)
-          state = X.next(); if (state.done !== false || state.value !== 2) throw 'fail: x 2: ' + JSON.stringify(state)
-          state = X.next(); if (state.done !== true || state.value !== 3) throw 'fail: x 3: ' + JSON.stringify(state)
-
-          const Y = y(123)
-          if (Symbol.iterator in Y) throw 'fail: y Symbol.iterator'
-          if (Symbol.asyncIterator in Y) throw 'fail: y Symbol.asyncIterator'
-          if (await Y !== -123) throw 'fail: y'
-
-          const Z = z(123)
-          if (Symbol.iterator in Z) throw 'fail: z Symbol.iterator'
-          if (Z[Symbol.asyncIterator]() !== Z) throw 'fail: z Symbol.asyncIterator'
-          state = await Z.next(); if (state.done !== false || state.value !== 1) throw 'fail: z 1: ' + JSON.stringify(state)
-          state = await Z.next(); if (state.done !== false || state.value !== 2) throw 'fail: z 2: ' + JSON.stringify(state)
-          state = await Z.next(); if (state.done !== false || state.value !== 3) throw 'fail: z 3: ' + JSON.stringify(state)
-          state = await Z.next(); if (state.done !== false || state.value !== 4) throw 'fail: z 4: ' + JSON.stringify(state)
-          state = await Z.next(); if (state.done !== false || state.value !== 5) throw 'fail: z 5: ' + JSON.stringify(state)
-          state = await Z.next(); if (state.done !== false || state.value !== 6) throw 'fail: z 6: ' + JSON.stringify(state)
-          state = await Z.next(); if (state.done !== false || state.value !== 7) throw 'fail: z 7: ' + JSON.stringify(state)
-          state = await Z.next(); if (state.done !== false || state.value !== 8) throw 'fail: z 8: ' + JSON.stringify(state)
-          state = await Z.next(); if (state.done !== true || state.value !== -123) throw 'fail: z 123: ' + JSON.stringify(state)
+        for await (let x of y) {
+          throw 'error'
         }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* {
-            [Symbol.asyncIterator]: () => ({ next() { throw 'f' } })
-          }
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          try { await it.next(); throw 'fail: f: next' } catch (err) { if (err !== 'f') throw err }
-          state = await it.next()
-          if (state.done !== true || state.value !== void 0) throw 'fail: f: done'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* {
-            [Symbol.asyncIterator]: () => ({ get next() { throw 'f' } })
-          }
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          try { await it.next(); throw 'fail: f: next' } catch (err) { if (err !== 'f') throw err }
-          state = await it.next()
-          if (state.done !== true || state.value !== void 0) throw 'fail: f: done'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* {
-            [Symbol.asyncIterator]: () => ({ async next() { throw 'f' } })
-          }
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          try { await it.next(); throw 'fail: f: next' } catch (err) { if (err !== 'f') throw err }
-          state = await it.next()
-          if (state.done !== true || state.value !== void 0) throw 'fail: f: done'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          try {
-            yield* {
-              [Symbol.asyncIterator]: () => ({
-                next: () => ({
-                  done: false,
-                  get value() { throw 'f' }
-                })
-              }),
-            }
-          } catch (e) {
-            return e
-          }
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          state = await it.next()
-          if (state.done !== true || state.value !== 'f') throw 'fail: f: next'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* [
-            Promise.reject('f.x'),
-            'f.y',
-          ]
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          try { await it.next(); throw 'fail: f: next' } catch (err) { if (err !== 'f.x') throw err }
-          state = await it.next()
-          if (state.done !== true || state.value !== void 0) throw 'fail: f: done'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* {
-            [Symbol.iterator]: () => ({ next: () => 123 }),
-          }
-          return 'f'
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          try { await it.next(); throw 'fail: f: next' } catch (err) { if (!(err instanceof TypeError)) throw err }
-          state = await it.next()
-          if (state.done !== true || state.value !== void 0) throw 'fail: f: done'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* {
-            [Symbol.asyncIterator]: () => ({ next: () => 123 }),
-          }
-          return 'f'
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          try { await it.next(); throw 'fail: f: next' } catch (err) { if (!(err instanceof TypeError)) throw err }
-          state = await it.next()
-          if (state.done !== true || state.value !== void 0) throw 'fail: f: done'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* [
-            'f.x',
-            'f.y',
-          ]
-          return 'f'
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          state = await it.next()
-          if (state.done !== false || state.value !== 'f.x') throw 'fail: f: next'
-          try { await it.throw('f: throw') } catch (err) { var error = err }
-          if (error !== 'f: throw') throw 'fail: f: ' + error
-          state = await it.next()
-          if (state.done !== true || state.value !== void 0) throw 'fail: f: done'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* {
-            [Symbol.iterator]: () => ({
-              next: a => ({ value: 'f.x.' + a, done: false }),
-              return: a => ({ value: 'f.y.' + a, done: true }),
-            })
-          }
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          state = await it.next('A')
-          if (state.done !== false || state.value !== 'f.x.undefined') throw 'fail: f: next'
-          state = await it.return('B')
-          if (state.done !== true || state.value !== 'f.y.B') throw 'fail: f: return'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* {
-            [Symbol.asyncIterator]: () => ({
-              next: a => Promise.resolve({ value: 'f.x.' + a, done: false }),
-              return: a => Promise.resolve({ value: 'f.y.' + a, done: true }),
-            })
-          }
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          state = await it.next('A')
-          if (state.done !== false || state.value !== 'f.x.undefined') throw 'fail: f: next'
-          state = await it.return('B')
-          if (state.done !== true || state.value !== 'f.y.B') throw 'fail: f: return'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* {
-            [Symbol.iterator]: () => ({
-              next: a => ({ value: 'f.x.' + a, done: false }),
-              throw: a => ({ value: 'f.y.' + a, done: true }),
-            })
-          }
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          state = await it.next('A')
-          if (state.done !== false || state.value !== 'f.x.undefined') throw 'fail: f: next'
-          state = await it.throw('B')
-          if (state.done !== true || state.value !== undefined) throw 'fail: f: throw'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          yield* {
-            [Symbol.asyncIterator]: () => ({
-              next: a => Promise.resolve({ value: 'f.x.' + a, done: false }),
-              throw: a => Promise.resolve({ value: 'f.y.' + a, done: true }),
-            })
-          }
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          state = await it.next('A')
-          if (state.done !== false || state.value !== 'f.x.undefined') throw 'fail: f: next'
-          state = await it.throw('B')
-          if (state.done !== true || state.value !== undefined) throw 'fail: f: throw'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          var value = 0
-          yield* {
-            [Symbol.iterator]: () => ({ next: () => ({ done: value > 10, value: value += 100 }) }),
-            get [Symbol.asyncIterator]() { value += 10; return undefined },
-          }
-          return value
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          state = await it.next(); if (state.done !== false || state.value !== 110) throw 'fail: f 110: ' + JSON.stringify(state)
-          state = await it.next(); if (state.done !== true || state.value !== 210) throw 'fail: f 210: ' + JSON.stringify(state)
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          var value = 0
-          yield* {
-            [Symbol.iterator]: () => ({ next: () => ({ done: value > 10, value: value += 100 }) }),
-            get [Symbol.asyncIterator]() { value += 10; return null },
-          }
-          return value
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          state = await it.next(); if (state.done !== false || state.value !== 110) throw 'fail: f 110: ' + JSON.stringify(state)
-          state = await it.next(); if (state.done !== true || state.value !== 210) throw 'fail: f 210: ' + JSON.stringify(state)
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          var value = 0
-          yield* {
-            [Symbol.iterator]: () => ({ next: () => ({ done: value > 10, value: value += 100 }) }),
-            get [Symbol.asyncIterator]() { value += 10; return false },
-          }
-          return value
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          try { await it.next() } catch (e) { var error = e }
-          if (!(error instanceof TypeError)) throw 'fail: f'
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        async function* f() {
-          var value = 0
-          yield* {
-            [Symbol.iterator]: () => ({ next: () => ({ done: value > 10, value: value += 100 }) }),
-            get [Symbol.asyncIterator]() { value += 10; return 0 },
-          }
-          return value
-        }
-        export let async = async () => {
-          let it, state
-          it = f()
-          try { await it.next() } catch (e) { var error = e }
-          if (!(error instanceof TypeError)) throw 'fail: f'
-        }
-      `,
-    }, { async: true }),
-  )
-}
-
-// Check "for await" lowering
-for (const flags of [[], ['--target=es6', '--target=es2017', '--supported:for-await=false']]) {
-  tests.push(
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        export let async = async () => {
-          const log = []
-          const it = {
-            [Symbol.iterator]() { return this },
-            next() { log.push(this === it && 'next'); return { value: 123, done: false } },
-            return() { log.push(this === it && 'return') },
-          }
-          try {
-            for await (const x of it) {
-              if (x !== 123) throw 'fail: ' + x
-              throw 'foo'
-            }
-          } catch (err) {
-            if (err !== 'foo') throw err
-          }
-          if (log + '' !== 'next,return') throw 'fail: ' + log
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        export let async = async () => {
-          const log = []
-          const it = {
-            [Symbol.asyncIterator]() { return this },
-            async next() { log.push(this === it && 'next'); return { value: 123, done: false } },
-            async return() { log.push(this === it && 'return') },
-          }
-          try {
-            for await (const x of it) {
-              if (x !== 123) throw 'fail: ' + x
-              throw 'foo'
-            }
-          } catch (err) {
-            if (err !== 'foo') throw err
-          }
-          if (log + '' !== 'next,return') throw 'fail: ' + log
-        }
-      `,
-    }, { async: true }),
-
-    // return() must not be called in this case (TypeScript has this bug: https://github.com/microsoft/TypeScript/issues/50525)
-    test(['in.js', '--outfile=node.js'].concat(flags), {
-      'in.js': `
-        let pass = true
-        async function f() {
-          const y = {
-            [Symbol.asyncIterator]() {
-              let count = 0
-              return {
-                async next() {
-                  count++
-                  if (count === 2) throw 'error'
-                  return { value: count }
-                },
-                async return() {
-                  pass = false
-                },
-              }
-            },
-          }
-          for await (let x of y) {
-          }
-        }
-        f().catch(() => {
-          if (!pass) throw 'fail'
-        })
-      `,
-    }),
-
-    // return() must be called in this case
-    test(['in.js', '--outfile=node.js'].concat(flags), {
-      'in.js': `
-        let pass = false
-        async function f() {
-          const y = {
-            [Symbol.asyncIterator]() {
-              let count = 0
-              return {
-                async next() {
-                  count++
-                  return { value: count }
-                },
-                async return() {
-                  pass = true
-                },
-              }
-            },
-          }
-          for await (let x of y) {
-            throw 'error'
-          }
-        }
-        f().catch(() => {
-          if (!pass) throw 'fail'
-        })
-      `,
-    }),
-  )
-}
+      }
+      f().catch(() => {
+        if (!pass) throw 'fail'
+      })
+    `,
+  }),
+)
 
 // Check object rest lowering
 // https://github.com/evanw/esbuild/issues/956
@@ -2109,26 +1669,6 @@ tests.push(
     'foo.js': `export default 123`,
     'node.js': `import out from './out.js'; if (out !== 123) throw 'fail'`,
   }),
-  test(['--bundle', 'foo.js', '--outfile=out.js', '--format=cjs', '--platform=node'], {
-    'foo.js': `
-      export function confuseNode(exports) {
-        // If this local is called "exports", node incorrectly
-        // thinks this file has an export called "notAnExport".
-        // We must make sure that it doesn't have that name
-        // when targeting Node with CommonJS. See also:
-        // https://github.com/evanw/esbuild/issues/3544
-        exports.notAnExport = function() {
-        };
-      }
-    `,
-    'node.js': `
-      exports.async = async () => {
-        const foo = await import('./out.js')
-        if (typeof foo.confuseNode !== 'function') throw 'fail: confuseNode'
-        if ('notAnExport' in foo) throw 'fail: notAnExport'
-      }
-    `,
-  }, { async: true }),
 
   // External package
   test(['--bundle', 'foo.js', '--outfile=out.js', '--format=cjs', '--external:fs'], {
@@ -2249,14 +1789,6 @@ tests.push(
       if (ns.default !== void 0) throw 'fail'
     `,
     'node_modules/pkg/index.mjs': ``,
-  }, {
-    expectedStderr: `▲ [WARNING] Import "default" will always be undefined because there is no matching export in "node_modules/pkg/index.mjs" [import-is-undefined]
-
-    in.js:3:13:
-      3 │       if (ns.default !== void 0) throw 'fail'
-        ╵              ~~~~~~~
-
-`,
   }),
   test(['in.js', '--outfile=node.js', '--bundle'], {
     'in.js': `
@@ -2264,14 +1796,6 @@ tests.push(
       if (ns.default !== void 0) throw 'fail'
     `,
     'node_modules/pkg/index.mts': ``,
-  }, {
-    expectedStderr: `▲ [WARNING] Import "default" will always be undefined because there is no matching export in "node_modules/pkg/index.mts" [import-is-undefined]
-
-    in.js:3:13:
-      3 │       if (ns.default !== void 0) throw 'fail'
-        ╵              ~~~~~~~
-
-`,
   }),
   test(['in.js', '--outfile=node.js', '--bundle'], {
     'in.js': `
@@ -2292,14 +1816,6 @@ tests.push(
       "type": "module"
     }`,
     'node_modules/pkg/index.js': ``,
-  }, {
-    expectedStderr: `▲ [WARNING] Import "default" will always be undefined because there is no matching export in "node_modules/pkg/index.js" [import-is-undefined]
-
-    in.js:3:13:
-      3 │       if (ns.default !== void 0) throw 'fail'
-        ╵              ~~~~~~~
-
-`,
   }),
   test(['in.js', '--outfile=node.js', '--bundle', '--external:pkg'], {
     'in.js': `
@@ -3103,20 +2619,6 @@ tests.push(
   }),
 )
 
-// Test import attributes
-tests.push(
-  test(['--bundle', 'entry.js', '--outfile=node.js', '--format=esm'], {
-    'entry.js': `
-      import * as foo from './package.json' with { type: 'json' }
-      if (foo.default.type !== 'module' || 'type' in foo) throw 'fail: static'
-
-      const bar = await import('./package.json', { with: { type: 'json' } })
-      if (bar.default.type !== 'module' || 'type' in bar) throw 'fail: dynamic'
-    `,
-    'package.json': `{ "type": "module" }`,
-  }),
-)
-
 // Test directive preservation
 tests.push(
   // The "__pow" symbol must not be hoisted above "use strict"
@@ -3238,24 +2740,6 @@ for (const minify of [[], ['--minify-syntax']]) {
         var x = class { static [-0xFFFF_FFFF_FFFF] = 1 }; if (x['-281474976710655'] !== 1) throw 'fail: -0xFFFF_FFFF_FFFF'
       `,
     }),
-
-    // See: https://github.com/evanw/esbuild/issues/3195
-    test(['in.js', '--outfile=node.js', '--keep-names'].concat(minify), {
-      'in.js': `
-        const log = [];
-        const sideEffect = x => log.push(x);
-        (() => {
-          function f() {}
-          sideEffect(1, f());
-        })();
-        (() => {
-          function g() {}
-          debugger;
-          sideEffect(2, g());
-        })();
-        if (log + '' !== '1,2') throw 'fail: ' + log;
-      `,
-    }),
   )
 
   // Check property access simplification
@@ -3276,7 +2760,7 @@ for (const minify of [[], ['--minify-syntax']]) {
       test(['in.js', '--outfile=node.js', '--log-level=error'].concat(minify), {
         'in.js': `if ({a: 1, a: 2}${access} !== 2) throw 'fail'`,
       }),
-      test(['in.js', '--outfile=node.js', '--log-level=error'].concat(minify), {
+      test(['in.js', '--outfile=node.js'].concat(minify), {
         'in.js': `if ({a: 1, [String.fromCharCode(97)]: 2}${access} !== 2) throw 'fail'`,
       }),
       test(['in.js', '--outfile=node.js'].concat(minify), {
@@ -3512,59 +2996,6 @@ for (const minify of [[], ['--minify-syntax']]) {
       `,
     }),
   );
-
-  // https://github.com/evanw/esbuild/issues/3125
-  tests.push(
-    test(['in.js', '--outfile=node.js'].concat(minify), {
-      'in.js': `
-        let y
-        {
-          // There was a bug where this incorrectly turned into "y = (() => x)()"
-          const f = () => x;
-          const x = 0;
-          y = f()
-        }
-        if (y !== 0) throw 'fail'
-      `,
-    }),
-  )
-
-  // https://github.com/evanw/esbuild/issues/3700
-  tests.push(
-    test(['in.js', '--bundle', '--outfile=node.js'].concat(minify), {
-      'in.js': `
-        import imported from './data.json'
-        const native = JSON.parse(\`{
-          "hello": "world",
-          "__proto__": {
-            "sky": "universe"
-          }
-        }\`)
-        const literal1 = {
-          "hello": "world",
-          "__proto__": {
-            "sky": "universe"
-          }
-        }
-        const literal2 = {
-          "hello": "world",
-          ["__proto__"]: {
-            "sky": "universe"
-          }
-        }
-        if (Object.getPrototypeOf(native)?.sky) throw 'fail: native'
-        if (!Object.getPrototypeOf(literal1)?.sky) throw 'fail: literal1'
-        if (Object.getPrototypeOf(literal2)?.sky) throw 'fail: literal2'
-        if (Object.getPrototypeOf(imported)?.sky) throw 'fail: imported'
-      `,
-      'data.json': `{
-        "hello": "world",
-        "__proto__": {
-          "sky": "universe"
-        }
-      }`,
-    }),
-  )
 }
 
 // Test minification of top-level symbols
@@ -3757,20 +3188,6 @@ for (let flags of [[], ['--minify', '--keep-names']]) {
     }),
     test(['in.js', '--outfile=node.js', '--bundle'].concat(flags), {
       'in.js': `(() => { let Foo = class { static foo() {} }; if (Foo.foo.name !== 'foo') throw 'fail: ' + Foo.foo.name })()`,
-    }),
-
-    // See: https://github.com/evanw/esbuild/issues/3199
-    test(['in.ts', '--outfile=node.js', '--target=es6'].concat(flags), {
-      'in.ts': `
-        namespace foo { export class Foo {} }
-        if (foo.Foo.name !== 'Foo') throw 'fail: ' + foo.Foo.name
-      `,
-    }),
-    test(['in.ts', '--outfile=node.js', '--target=esnext'].concat(flags), {
-      'in.ts': `
-        namespace foo { export class Foo {} }
-        if (foo.Foo.name !== 'Foo') throw 'fail: ' + foo.Foo.name
-      `,
     }),
   )
 }
@@ -3980,37 +3397,6 @@ tests.push(
   }),
 )
 
-// Check for an obscure bug with minification, symbol renaming, and sloppy
-// nested function declarations: https://github.com/evanw/esbuild/issues/2809.
-// Previously esbuild generated the following code:
-//
-//   let f = 0;
-//   for (let l of [1, 2]) {
-//     let t = function(o) {
-//       return o;
-//     };
-//     var f = t;
-//     f += t(l);
-//   }
-//   if (f !== 3)
-//     throw "fail";
-//
-// Notice how "f" is declared twice, leading to a syntax error.
-for (const flags of [[], ['--minify']]) {
-  tests.push(
-    test(['in.js', '--outfile=node.js', '--format=esm'].concat(flags), {
-      'in.js': `
-        let total = 0
-        for (let value of [1, 2]) {
-          function f(x) { return x }
-          total += f(value)
-        }
-        if (total !== 3) throw 'fail'
-      `,
-    }),
-  )
-}
-
 // Test hoisting variables inside for loop initializers outside of lazy ESM
 // wrappers. Previously this didn't work due to a bug that considered for
 // loop initializers to already be in the top-level scope. For more info
@@ -4165,43 +3551,6 @@ tests.push(
       };
       if (!sideEffect) throw 'fail'
     `,
-  }),
-
-  // Keep because side effects (decorators)
-  test(['--bundle', 'entry.ts', '--outfile=node.js', '--target=es2022'], {
-    'entry.ts': `
-      import { order } from './decorator'
-      import './class'
-      import './field'
-      import './method'
-      import './accessor'
-      import './parameter'
-      import './static-field'
-      import './static-method'
-      import './static-accessor'
-      import './static-parameter'
-      if (order + '' !== ',field,method,accessor,parameter,staticField,staticMethod,staticAccessor,staticParameter') throw 'fail: ' + order
-    `,
-    'decorator.ts': `
-      export const order = []
-      export const fn = (_, name) => {
-        order.push(name)
-      }
-    `,
-    'class.ts': `import { fn } from './decorator'; @fn class Foo {}`,
-    'field.ts': `import { fn } from './decorator'; class Foo { @fn field }`,
-    'method.ts': `import { fn } from './decorator'; class Foo { @fn method() {} }`,
-    'accessor.ts': `import { fn } from './decorator'; class Foo { @fn accessor accessor }`,
-    'parameter.ts': `import { fn } from './decorator'; class Foo { parameter(@fn arg) {} }`,
-    'static-field.ts': `import { fn } from './decorator'; class Foo { @fn static staticField }`,
-    'static-method.ts': `import { fn } from './decorator'; class Foo { @fn static staticMethod() {} }`,
-    'static-accessor.ts': `import { fn } from './decorator'; class Foo { @fn static accessor staticAccessor }`,
-    'static-parameter.ts': `import { fn } from './decorator'; class Foo { static staticParameter(@fn arg) {} }`,
-    'tsconfig.json': `{
-      "compilerOptions": {
-        "experimentalDecorators": true
-      }
-    }`,
   }),
 )
 
@@ -5533,203 +4882,6 @@ for (let flags of [['--target=es2022'], ['--target=es6'], ['--bundle', '--target
         try { temp = (class A { capture = () => A; static a = 1; static [A.a]() { return 2 } }) } catch (err) { staticMethod = err }
         if (!staticMethod) throw 'fail: staticMethod'
       `,
-    }),
-
-    // https://github.com/evanw/esbuild/issues/3326
-    test(['in.ts', '--outfile=node.js'].concat(flags), {
-      'in.ts': `
-        const log: string[] = []
-        class Test1 {
-          static deco(target: any, key: any, desc: any): any { log.push('Test1') }
-          @Test1.deco static test(): void { }
-        }
-        class Test2 {
-          static deco(target: any, key: any, desc: any): any { log.push('Test2') }
-          @Test2.deco static test(): Test2 { return new Test2(); }
-        }
-        @Test3.deco
-        class Test3 {
-          static deco(target: any): any { log.push('Test3') }
-        }
-        if (log + '' !== 'Test1,Test2,Test3') throw 'fail: ' + log
-      `,
-      'tsconfig.json': `{
-        "compilerOptions": {
-          "experimentalDecorators": true,
-        },
-      }`,
-    }),
-
-    // https://github.com/evanw/esbuild/issues/3394
-    test(['in.ts', '--outfile=node.js'].concat(flags), {
-      'in.ts': `
-        const dec = (arg: number): ParameterDecorator => () => { answer = arg }
-        let answer = 0
-
-        class Foo {
-          static #foo = 123
-          static bar = 234
-          method(@dec(Foo.#foo + Foo.bar) arg: any) {
-          }
-        }
-
-        if (answer !== 357) throw 'fail: ' + answer
-      `,
-      'tsconfig.json': `{
-        "compilerOptions": {
-          "experimentalDecorators": true,
-        },
-      }`,
-    }),
-
-    // https://github.com/evanw/esbuild/issues/3538
-    test(['in.js', '--outfile=node.js'].concat(flags), {
-      'in.js': `
-        class Foo extends Array {
-          pass = false
-          constructor() {
-            let base = super()
-            this.pass = base === this &&
-              base instanceof Array &&
-              base instanceof Foo
-          }
-        }
-        if (!new Foo().pass) throw 'fail'
-      `,
-    }),
-    test(['in.ts', '--outfile=node.js'].concat(flags), {
-      'in.ts': `
-        class Foo extends Array {
-          pass: boolean = false
-          constructor() {
-            let base = super()
-            this.pass = base === this &&
-              base instanceof Array &&
-              base instanceof Foo
-          }
-        }
-        if (!new Foo().pass) throw 'fail'
-      `,
-      'tsconfig.json': `{
-        "compilerOptions": {
-          "useDefineForClassFields": false,
-        },
-      }`,
-    }),
-    test(['in.js', '--outfile=node.js'].concat(flags), {
-      'in.js': `
-        class Bar {
-          constructor(x) {
-            return x
-          }
-        }
-        class Foo extends Bar {
-          pass = false
-          constructor() {
-            let base = super([])
-            this.pass = base === this &&
-              base instanceof Array &&
-              !(base instanceof Foo)
-          }
-        }
-        if (!new Foo().pass) throw 'fail'
-      `,
-    }),
-    test(['in.ts', '--outfile=node.js'].concat(flags), {
-      'in.ts': `
-        class Bar {
-          constructor(x) {
-            return x
-          }
-        }
-        class Foo extends Bar {
-          pass: boolean = false
-          constructor() {
-            let base = super([])
-            this.pass = base === this &&
-              base instanceof Array &&
-              !(base instanceof Foo)
-          }
-        }
-        if (!new Foo().pass) throw 'fail'
-      `,
-      'tsconfig.json': `{
-        "compilerOptions": {
-          "useDefineForClassFields": false,
-        },
-      }`,
-    }),
-
-    // https://github.com/evanw/esbuild/issues/3559
-    test(['in.ts', '--outfile=node.js'].concat(flags), {
-      'in.ts': `
-        class Foo extends Array {
-          #private: any
-          pass: any
-          constructor() {
-            super()
-            this.pass = true
-          }
-        }
-        if (!new Foo().pass) throw 'fail'
-      `,
-      'tsconfig.json': `{
-        "compilerOptions": {
-          "useDefineForClassFields": false,
-        },
-      }`,
-    }),
-    test(['in.ts', '--outfile=node.js'].concat(flags), {
-      'in.ts': `
-        class Foo extends Array {
-          #private: any
-          pass = true
-          constructor() {
-            super()
-          }
-        }
-        if (!new Foo().pass) throw 'fail'
-      `,
-      'tsconfig.json': `{
-        "compilerOptions": {
-          "useDefineForClassFields": false,
-        },
-      }`,
-    }),
-    test(['in.ts', '--outfile=node.js'].concat(flags), {
-      'in.ts': `
-        class Foo extends Array {
-          #private = 123
-          pass: any
-          constructor() {
-            super()
-            this.pass = true
-          }
-        }
-        if (!new Foo().pass) throw 'fail'
-      `,
-      'tsconfig.json': `{
-        "compilerOptions": {
-          "useDefineForClassFields": false,
-        },
-      }`,
-    }),
-    test(['in.ts', '--outfile=node.js'].concat(flags), {
-      'in.ts': `
-        class Foo extends Array {
-          #private = 123
-          pass: any = true
-          constructor() {
-            super()
-          }
-        }
-        if (!new Foo().pass) throw 'fail'
-      `,
-      'tsconfig.json': `{
-        "compilerOptions": {
-          "useDefineForClassFields": false,
-        },
-      }`,
     }),
   )
 
@@ -8113,70 +7265,6 @@ tests.push(
   }),
 )
 
-// Tests for CSS modules
-tests.push(
-  test(['in.js', '--outfile=node.js', '--bundle', '--loader:.css=local-css'], {
-    'in.js': `
-      import * as ns from './styles.css'
-      if (ns.buton !== void 0) throw 'fail'
-    `,
-    'styles.css': `
-      .bu\\74 ton { color: red }
-    `,
-  }, {
-    expectedStderr: `▲ [WARNING] Import "buton" will always be undefined because there is no matching export in "styles.css" [import-is-undefined]
-
-    in.js:3:13:
-      3 │       if (ns.buton !== void 0) throw 'fail'
-        │              ~~~~~
-        ╵              button
-
-  Did you mean to import "button" instead?
-
-    styles.css:2:7:
-      2 │       .bu\\74 ton { color: red }
-        ╵        ~~~~~~~~~
-
-`,
-  }),
-  test(['in.js', '--outfile=node.js', '--bundle'], {
-    'in.js': `
-      import * as foo_styles from "./foo.css"
-      import * as bar_styles from "./bar"
-      const { foo } = foo_styles
-      const { bar } = bar_styles
-      if (foo !== void 0) throw 'fail: foo=' + foo
-      if (bar !== void 0) throw 'fail: bar=' + bar
-    `,
-    'foo.css': `.foo { color: red }`,
-    'bar.css': `.bar { color: green }`,
-  }),
-  test(['in.js', '--outfile=node.js', '--bundle'], {
-    'in.js': `
-      import * as foo_styles from "./foo.module.css"
-      import * as bar_styles from "./bar.module"
-      const { foo } = foo_styles
-      const { bar } = bar_styles
-      if (foo !== 'foo_foo') throw 'fail: foo=' + foo
-      if (bar !== 'bar_bar') throw 'fail: bar=' + bar
-    `,
-    'foo.module.css': `.foo { color: red }`,
-    'bar.module.css': `.bar { color: green }`,
-  }),
-  test(['in.js', '--outfile=node.js', '--bundle', '--loader:.module.css=css'], {
-    'in.js': `
-      import * as foo_styles from "./foo.module.css"
-      import * as bar_styles from "./bar.module"
-      const { foo } = foo_styles
-      const { bar } = bar_styles
-      if (foo !== void 0) throw 'fail: foo=' + foo
-      if (bar !== void 0) throw 'fail: bar=' + bar
-    `,
-    'foo.module.css': `.foo { color: red }`,
-    'bar.module.css': `.bar { color: green }`,
-  }),
-)
-
 // Test writing to stdout
 tests.push(
   // These should succeed
@@ -8319,266 +7407,6 @@ if (process.platform === 'darwin' || process.platform === 'win32') {
       'node_modules/pkg/file1.js': `export default 123`,
       'node_modules/pkg/File2.js': `export default 234`,
     }),
-  )
-}
-
-// Test glob import behavior
-for (const ext of ['.js', '.ts']) {
-  tests.push(
-    test(['./src/*' + ext, '--outdir=out', '--bundle', '--format=cjs'], {
-      'node.js': `
-        if (require('./out/a.js') !== 10) throw 'fail: a'
-        if (require('./out/b.js') !== 11) throw 'fail: b'
-        if (require('./out/c.js') !== 12) throw 'fail: c'
-      `,
-      ['src/a' + ext]: `module.exports = 10`,
-      ['src/b' + ext]: `module.exports = 11`,
-      ['src/c' + ext]: `module.exports = 12`,
-    }),
-    test(['in' + ext, '--outfile=node.js', '--bundle'], {
-      ['in' + ext]: `
-        for (let i = 0; i < 3; i++) {
-          const value = require('./' + i + '${ext}')
-          if (value !== i + 10) throw 'fail: ' + i
-        }
-      `,
-      ['0' + ext]: `module.exports = 10`,
-      ['1' + ext]: `module.exports = 11`,
-      ['2' + ext]: `module.exports = 12`,
-    }),
-    test(['in' + ext, '--outfile=node.js', '--bundle'], {
-      ['in' + ext]: `
-        for (let i = 0; i < 3; i++) {
-          const value = require(\`./\${i}${ext}\`)
-          if (value !== i + 10) throw 'fail: ' + i
-        }
-      `,
-      ['0' + ext]: `module.exports = 10`,
-      ['1' + ext]: `module.exports = 11`,
-      ['2' + ext]: `module.exports = 12`,
-    }),
-    test(['in' + ext, '--outfile=node.js', '--bundle'], {
-      ['in' + ext]: `
-        export let async = async () => {
-          for (let i = 0; i < 3; i++) {
-            const { default: value } = await import('./' + i + '${ext}')
-            if (value !== i + 10) throw 'fail: ' + i
-          }
-        }
-      `,
-      ['0' + ext]: `export default 10`,
-      ['1' + ext]: `export default 11`,
-      ['2' + ext]: `export default 12`,
-    }, { async: true }),
-    test(['in' + ext, '--outfile=node.js', '--bundle'], {
-      ['in' + ext]: `
-        export let async = async () => {
-          for (let i = 0; i < 3; i++) {
-            const { default: value } = await import(\`./\${i}${ext}\`)
-            if (value !== i + 10) throw 'fail: ' + i
-          }
-        }
-      `,
-      ['0' + ext]: `export default 10`,
-      ['1' + ext]: `export default 11`,
-      ['2' + ext]: `export default 12`,
-    }, { async: true }),
-  )
-}
-
-// Test "using" declarations
-for (const flags of [[], '--supported:async-await=false']) {
-  tests.push(
-    test(['in.js', '--outfile=node.js', '--supported:using=false'].concat(flags), {
-      'in.js': `
-        Symbol.dispose ||= Symbol.for('Symbol.dispose')
-        const log = []
-        {
-          using x = { [Symbol.dispose]() { log.push('x') } }
-          using y = { [Symbol.dispose]() { log.push('y') } }
-          using z1 = null
-          using z2 = undefined
-          try {
-            using no = 0
-          } catch {
-            log.push('no')
-          }
-          log.push('z')
-        }
-        if (log + '' !== 'no,z,y,x') throw 'fail: ' + log
-      `,
-    }),
-    test(['in.js', '--outfile=node.js', '--supported:using=false', '--format=esm'].concat(flags), {
-      'in.js': `
-        Symbol.asyncDispose ||= Symbol.for('Symbol.asyncDispose')
-        export let async = async () => {
-          const log = []
-          {
-            await using x = { [Symbol.asyncDispose]() {
-              log.push('x1')
-              Promise.resolve().then(() => log.push('x2'))
-              return Promise.resolve()
-            } }
-            await using y = { [Symbol.asyncDispose]() {
-              log.push('y1')
-              Promise.resolve().then(() => log.push('y2'))
-              return Promise.resolve()
-            } }
-            await using z1 = null
-            await using z2 = undefined
-            try {
-              await using no = 0
-            } catch {
-              log.push('no')
-            }
-            log.push('z')
-          }
-          if (log + '' !== 'no,z,y1,y2,x1,x2') throw 'fail: ' + log
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--supported:using=false'].concat(flags), {
-      'in.js': `
-        Symbol.dispose ||= Symbol.for('Symbol.dispose')
-        const log = []
-        for (using x of [
-          { [Symbol.dispose]() { log.push('x') } },
-          null,
-          { [Symbol.dispose]() { log.push('y') } },
-          undefined,
-        ]) {
-          try {
-            using no = 0
-          } catch {
-            log.push('no')
-          }
-          log.push('z')
-        }
-        if (log + '' !== 'no,z,x,no,z,no,z,y,no,z') throw 'fail: ' + log
-      `,
-    }),
-    test(['in.js', '--outfile=node.js', '--supported:using=false', '--format=esm'].concat(flags), {
-      'in.js': `
-        Symbol.dispose ||= Symbol.for('Symbol.dispose')
-        Symbol.asyncDispose ||= Symbol.for('Symbol.asyncDispose')
-        export let async = async () => {
-          const log = []
-          for (await using x of [
-            { [Symbol.dispose]() { log.push('x') } },
-            null,
-            { [Symbol.asyncDispose]() {
-              log.push('y1')
-              Promise.resolve().then(() => log.push('y2'))
-              return Promise.resolve()
-            } },
-            undefined,
-          ]) {
-            try {
-              using no = 0
-            } catch {
-              log.push('no')
-            }
-            log.push('z')
-          }
-          if (log + '' !== 'no,z,x,no,z,no,z,y1,y2,no,z') throw 'fail: ' + log
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--supported:using=false', '--format=esm'].concat(flags), {
-      'in.js': `
-        Symbol.dispose ||= Symbol.for('Symbol.dispose')
-        export let async = async () => {
-          const log = []
-          for await (using x of [
-            { [Symbol.dispose]() { log.push('x1') } },
-            Promise.resolve({ [Symbol.dispose]() { log.push('x2') } }),
-            null,
-            Promise.resolve(null),
-            undefined,
-            Promise.resolve(undefined),
-          ]) {
-            try {
-              using no = 0
-            } catch {
-              log.push('no')
-            }
-            log.push('z')
-          }
-          if (log + '' !== 'no,z,x1,no,z,x2,no,z,no,z,no,z,no,z') throw 'fail: ' + log
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--supported:using=false', '--format=esm'].concat(flags), {
-      'in.js': `
-        Symbol.dispose ||= Symbol.for('Symbol.dispose')
-        Symbol.asyncDispose ||= Symbol.for('Symbol.asyncDispose')
-        export let async = async () => {
-          const log = []
-          for await (await using x of [
-            { [Symbol.dispose]() { log.push('x1') } },
-            Promise.resolve({ [Symbol.dispose]() { log.push('x2') } }),
-            { [Symbol.asyncDispose]() { log.push('y1') } },
-            Promise.resolve({ [Symbol.asyncDispose]() { log.push('y2') } }),
-            null,
-            Promise.resolve(null),
-            undefined,
-            Promise.resolve(undefined),
-          ]) {
-            try {
-              using no = 0
-            } catch {
-              log.push('no')
-            }
-            log.push('z')
-          }
-          if (log + '' !== 'no,z,x1,no,z,x2,no,z,y1,no,z,y2,no,z,no,z,no,z,no,z') throw 'fail: ' + log
-        }
-      `,
-    }, { async: true }),
-    test(['in.js', '--outfile=node.js', '--supported:using=false'].concat(flags), {
-      'in.js': `
-        Symbol.dispose ||= Symbol.for('Symbol.dispose')
-        class Foo { [Symbol.dispose]() { throw new Error('x') } }
-        try {
-          using x = new Foo
-          throw new Error('y')
-        } catch (err) {
-          var result = err
-        }
-        if (result.name !== 'SuppressedError') throw 'fail: SuppressedError'
-        if (result.error.message !== 'x') throw 'fail: x'
-        if (result.suppressed.message !== 'y') throw 'fail: y'
-        try {
-          using x = new Foo
-        } catch (err) {
-          var result = err
-        }
-        if (result.message !== 'x') throw 'fail: x (2)'
-      `,
-    }),
-    test(['in.js', '--outfile=node.js', '--supported:using=false', '--format=esm'].concat(flags), {
-      'in.js': `
-        Symbol.asyncDispose ||= Symbol.for('Symbol.asyncDispose')
-        class Foo { [Symbol.asyncDispose]() { throw new Error('x') } }
-        export let async = async () => {
-          try {
-            await using x = new Foo
-            throw new Error('y')
-          } catch (err) {
-            var result = err
-          }
-          if (result.name !== 'SuppressedError') throw 'fail: SuppressedError'
-          if (result.error.message !== 'x') throw 'fail: x'
-          if (result.suppressed.message !== 'y') throw 'fail: y'
-          try {
-            await using x = new Foo
-          } catch (err) {
-            var result = err
-          }
-          if (result.message !== 'x') throw 'fail: x (2)'
-        }
-      `,
-    }, { async: true }),
   )
 }
 

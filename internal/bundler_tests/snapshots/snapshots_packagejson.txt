@@ -416,19 +416,6 @@ function main_browser_esm_default() {
 console.log(main_browser_esm_default());
 
 ================================================================================
-TestPackageJsonDisabledTypeModuleIssue3367
----------- /out.js ----------
-// (disabled):node_modules/foo/index.js
-var require_foo = __commonJS({
-  "(disabled):node_modules/foo/index.js"() {
-  }
-});
-
-// entry.js
-var import_foo = __toESM(require_foo());
-(0, import_foo.default)();
-
-================================================================================
 TestPackageJsonDualPackageHazardImportAndRequireBrowser
 ---------- /Users/user/project/out.js ----------
 // Users/user/project/node_modules/demo-pkg/main.browser.js
@@ -842,15 +829,6 @@ console.log("pkg3");
 
 // tmp/pkg/@scope/pkg4/bat.js
 console.log("pkg4");
-
-================================================================================
-TestPackageJsonSubpathImportNodeBuiltinIssue3485
----------- /out.js ----------
-// entry.js
-import fs from "fs";
-import http from "node:http";
-fs.readFileSync();
-http.createServer();
 
 ================================================================================
 TestPackageJsonTypeShouldBeTypes

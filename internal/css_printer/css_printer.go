@@ -11,7 +11,6 @@ import (
 	"github.com/evanw/esbuild/internal/css_ast"
 	"github.com/evanw/esbuild/internal/css_lexer"
 	"github.com/evanw/esbuild/internal/helpers"
-	"github.com/evanw/esbuild/internal/logger"
 	"github.com/evanw/esbuild/internal/sourcemap"
 )
 
@@ -19,15 +18,12 @@ const quoteForURL byte = 0
 
 type printer struct {
 	options                Options
-	symbols                ast.SymbolMap
 	importRecords          []ast.ImportRecord
 	css                    []byte
 	hasLegalComment        map[string]struct{}
 	extractedLegalComments []string
 	jsonMetadataImports    []string
 	builder                sourcemap.ChunkBuilder
-	oldLineStart           int
-	oldLineEnd             int
 }
 
 type Options struct {
@@ -39,11 +35,6 @@ type Options struct {
 	// us do binary search on to figure out what line a given AST node came from
 	LineOffsetTables []sourcemap.LineOffsetTable
 
-	// Local symbol renaming results go here
-	LocalNames map[ast.Ref]string
-
-	LineLimit           int
-	InputSourceIndex    uint32
 	UnsupportedFeatures compat.CSSFeature
 	MinifyWhitespace    bool
 	ASCIIOnly           bool
@@ -64,10 +55,9 @@ type PrintResult struct {
 	SourceMapChunk sourcemap.Chunk
 }
 
-func Print(tree css_ast.AST, symbols ast.SymbolMap, options Options) PrintResult {
+func Print(tree css_ast.AST, options Options) PrintResult {
 	p := printer{
 		options:       options,
-		symbols:       symbols,
 		importRecords: tree.ImportRecords,
 		builder:       sourcemap.MakeChunkBuilder(options.InputSourceMap, options.LineOffsetTables, options.ASCIIOnly),
 	}
@@ -124,24 +114,8 @@ func (p *printer) printRule(rule css_ast.Rule, indent int32, omitTrailingSemicol
 		}
 	}
 
-	if p.options.LineLimit > 0 {
-		p.printNewlinePastLineLimit(indent)
-	}
-
 	if p.options.AddSourceMappings {
-		shouldPrintMapping := true
-		if indent == 0 || p.options.MinifyWhitespace {
-			switch rule.Data.(type) {
-			case *css_ast.RSelector, *css_ast.RQualified, *css_ast.RBadDeclaration:
-				// These rules will begin with a potentially more accurate mapping. We
-				// shouldn't print a mapping here if there's no indent in between this
-				// mapping and the rule.
-				shouldPrintMapping = false
-			}
-		}
-		if shouldPrintMapping {
-			p.builder.AddSourceMapping(rule.Loc, "", p.css)
-		}
+		p.builder.AddSourceMapping(rule.Loc, "", p.css)
 	}
 
 	if !p.options.MinifyWhitespace {
@@ -154,7 +128,7 @@ func (p *printer) printRule(rule css_ast.Rule, indent int32, omitTrailingSemicol
 		p.print("@charset ")
 
 		// It's not valid to print the string with single quotes
-		p.printQuotedWithQuote(r.Encoding, '"', 0)
+		p.printQuotedWithQuote(r.Encoding, '"')
 		p.print(";")
 
 	case *css_ast.RAtImport:
@@ -163,43 +137,16 @@ func (p *printer) printRule(rule css_ast.Rule, indent int32, omitTrailingSemicol
 		} else {
 			p.print("@import ")
 		}
-		record := p.importRecords[r.ImportRecordIndex]
-		var flags printQuotedFlags
-		if record.Flags.Has(ast.ContainsUniqueKey) {
-			flags |= printQuotedNoWrap
-		}
-		p.printQuoted(record.Path.Text, flags)
+		p.printQuoted(p.importRecords[r.ImportRecordIndex].Path.Text)
 		p.recordImportPathForMetafile(r.ImportRecordIndex)
-		if conditions := r.ImportConditions; conditions != nil {
-			space := !p.options.MinifyWhitespace
-			if len(conditions.Layers) > 0 {
-				if space {
-					p.print(" ")
-				}
-				p.printTokens(conditions.Layers, printTokensOpts{})
-				space = true
-			}
-			if len(conditions.Supports) > 0 {
-				if space {
-					p.print(" ")
-				}
-				p.printTokens(conditions.Supports, printTokensOpts{})
-				space = true
-			}
-			if len(conditions.Media) > 0 {
-				if space {
-					p.print(" ")
-				}
-				p.printTokens(conditions.Media, printTokensOpts{})
-			}
-		}
+		p.printTokens(r.ImportConditions, printTokensOpts{})
 		p.print(";")
 
 	case *css_ast.RAtKeyframes:
 		p.print("@")
 		p.printIdent(r.AtToken, identNormal, mayNeedWhitespaceAfter)
 		p.print(" ")
-		p.printSymbol(r.Name.Loc, r.Name.Ref, identNormal, canDiscardWhitespaceAfter)
+		p.printIdent(r.Name, identNormal, canDiscardWhitespaceAfter)
 		if !p.options.MinifyWhitespace {
 			p.print(" ")
 		}
@@ -210,9 +157,6 @@ func (p *printer) printRule(rule css_ast.Rule, indent int32, omitTrailingSemicol
 		}
 		indent++
 		for _, block := range r.Blocks {
-			if p.options.AddSourceMappings {
-				p.builder.AddSourceMapping(block.Loc, "", p.css)
-			}
 			if !p.options.MinifyWhitespace {
 				p.printIndent(indent)
 			}
@@ -229,15 +173,12 @@ func (p *printer) printRule(rule css_ast.Rule, indent int32, omitTrailingSemicol
 			if !p.options.MinifyWhitespace {
 				p.print(" ")
 			}
-			p.printRuleBlock(block.Rules, indent, block.CloseBraceLoc)
+			p.printRuleBlock(block.Rules, indent)
 			if !p.options.MinifyWhitespace {
 				p.print("\n")
 			}
 		}
 		indent--
-		if p.options.AddSourceMappings && r.CloseBraceLoc.Start != 0 {
-			p.builder.AddSourceMapping(r.CloseBraceLoc, "", p.css)
-		}
 		if !p.options.MinifyWhitespace {
 			p.printIndent(indent)
 		}
@@ -260,7 +201,7 @@ func (p *printer) printRule(rule css_ast.Rule, indent int32, omitTrailingSemicol
 			if !p.options.MinifyWhitespace && len(r.Prelude) > 0 {
 				p.print(" ")
 			}
-			p.printRuleBlock(r.Rules, indent, r.CloseBraceLoc)
+			p.printRuleBlock(r.Rules, indent)
 		}
 
 	case *css_ast.RUnknownAt:
@@ -284,18 +225,18 @@ func (p *printer) printRule(rule css_ast.Rule, indent int32, omitTrailingSemicol
 		}
 
 	case *css_ast.RSelector:
-		p.printComplexSelectors(r.Selectors, indent, layoutMultiLine)
+		p.printComplexSelectors(r.Selectors, indent)
 		if !p.options.MinifyWhitespace {
 			p.print(" ")
 		}
-		p.printRuleBlock(r.Rules, indent, r.CloseBraceLoc)
+		p.printRuleBlock(r.Rules, indent)
 
 	case *css_ast.RQualified:
 		hasWhitespaceAfter := p.printTokens(r.Prelude, printTokensOpts{})
 		if !hasWhitespaceAfter && !p.options.MinifyWhitespace {
 			p.print(" ")
 		}
-		p.printRuleBlock(r.Rules, indent, r.CloseBraceLoc)
+		p.printRuleBlock(r.Rules, indent)
 
 	case *css_ast.RDeclaration:
 		p.printIdent(r.KeyText, identNormal, canDiscardWhitespaceAfter)
@@ -341,7 +282,7 @@ func (p *printer) printRule(rule css_ast.Rule, indent int32, omitTrailingSemicol
 			if !p.options.MinifyWhitespace {
 				p.print(" ")
 			}
-			p.printRuleBlock(r.Rules, indent, r.CloseBraceLoc)
+			p.printRuleBlock(r.Rules, indent)
 		}
 
 	default:
@@ -374,7 +315,7 @@ func (p *printer) printIndentedComment(indent int32, text string) {
 	p.print(text)
 }
 
-func (p *printer) printRuleBlock(rules []css_ast.Rule, indent int32, closeBraceLoc logger.Loc) {
+func (p *printer) printRuleBlock(rules []css_ast.Rule, indent int32) {
 	if p.options.MinifyWhitespace {
 		p.print("{")
 	} else {
@@ -386,65 +327,43 @@ func (p *printer) printRuleBlock(rules []css_ast.Rule, indent int32, closeBraceL
 		p.printRule(decl, indent+1, omitTrailingSemicolon)
 	}
 
-	if p.options.AddSourceMappings && closeBraceLoc.Start != 0 {
-		p.builder.AddSourceMapping(closeBraceLoc, "", p.css)
-	}
 	if !p.options.MinifyWhitespace {
 		p.printIndent(indent)
 	}
 	p.print("}")
 }
 
-type selectorLayout uint8
-
-const (
-	layoutMultiLine selectorLayout = iota
-	layoutSingleLine
-)
-
-func (p *printer) printComplexSelectors(selectors []css_ast.ComplexSelector, indent int32, layout selectorLayout) {
+func (p *printer) printComplexSelectors(selectors []css_ast.ComplexSelector, indent int32) {
 	for i, complex := range selectors {
 		if i > 0 {
 			if p.options.MinifyWhitespace {
 				p.print(",")
-				if p.options.LineLimit > 0 {
-					p.printNewlinePastLineLimit(indent)
-				}
-			} else if layout == layoutMultiLine {
+			} else {
 				p.print(",\n")
 				p.printIndent(indent)
-			} else {
-				p.print(", ")
 			}
 		}
 
 		for j, compound := range complex.Selectors {
-			p.printCompoundSelector(compound, j == 0, j+1 == len(complex.Selectors), indent)
+			p.printCompoundSelector(compound, j == 0, j+1 == len(complex.Selectors))
 		}
 	}
 }
 
-func (p *printer) printCompoundSelector(sel css_ast.CompoundSelector, isFirst bool, isLast bool, indent int32) {
-	if !isFirst && sel.Combinator.Byte == 0 {
+func (p *printer) printCompoundSelector(sel css_ast.CompoundSelector, isFirst bool, isLast bool) {
+	if !isFirst && sel.Combinator == 0 {
 		// A space is required in between compound selectors if there is no
 		// combinator in the middle. It's fine to convert "a + b" into "a+b"
 		// but not to convert "a b" into "ab".
-		if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit(indent) {
-			p.print(" ")
-		}
+		p.print(" ")
 	}
 
-	if sel.Combinator.Byte != 0 {
+	if sel.Combinator != 0 {
 		if !isFirst && !p.options.MinifyWhitespace {
 			p.print(" ")
 		}
-
-		if p.options.AddSourceMappings {
-			p.builder.AddSourceMapping(sel.Combinator.Loc, "", p.css)
-		}
-		p.css = append(p.css, sel.Combinator.Byte)
-
-		if (p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit(indent)) && !p.options.MinifyWhitespace {
+		p.css = append(p.css, sel.Combinator)
+		if !p.options.MinifyWhitespace {
 			p.print(" ")
 		}
 	}
@@ -459,15 +378,11 @@ func (p *printer) printCompoundSelector(sel css_ast.CompoundSelector, isFirst bo
 		p.printNamespacedName(*sel.TypeSelector, whitespace)
 	}
 
-	if sel.HasNestingSelector() {
-		if p.options.AddSourceMappings {
-			p.builder.AddSourceMapping(logger.Loc{Start: int32(sel.NestingSelectorLoc.GetIndex())}, "", p.css)
-		}
-
+	if sel.HasNestingSelector {
 		p.print("&")
 	}
 
-	for i, ss := range sel.SubclassSelectors {
+	for i, sub := range sel.SubclassSelectors {
 		whitespace := mayNeedWhitespaceAfter
 
 		// There is no chance of whitespace between subclass selectors
@@ -475,21 +390,17 @@ func (p *printer) printCompoundSelector(sel css_ast.CompoundSelector, isFirst bo
 			whitespace = canDiscardWhitespaceAfter
 		}
 
-		if p.options.AddSourceMappings {
-			p.builder.AddSourceMapping(ss.Range.Loc, "", p.css)
-		}
-
-		switch s := ss.Data.(type) {
+		switch s := sub.(type) {
 		case *css_ast.SSHash:
 			p.print("#")
 
 			// This deliberately does not use identHash. From the specification:
 			// "In <id-selector>, the <hash-token>'s value must be an identifier."
-			p.printSymbol(s.Name.Loc, s.Name.Ref, identNormal, whitespace)
+			p.printIdent(s.Name, identNormal, whitespace)
 
 		case *css_ast.SSClass:
 			p.print(".")
-			p.printSymbol(s.Name.Loc, s.Name.Ref, identNormal, whitespace)
+			p.printIdent(s.Name, identNormal, whitespace)
 
 		case *css_ast.SSAttribute:
 			p.print("[")
@@ -512,7 +423,7 @@ func (p *printer) printCompoundSelector(sel css_ast.CompoundSelector, isFirst bo
 				if printAsIdent {
 					p.printIdent(s.MatcherValue, identNormal, canDiscardWhitespaceAfter)
 				} else {
-					p.printQuoted(s.MatcherValue, 0)
+					p.printQuoted(s.MatcherValue)
 				}
 			}
 			if s.MatcherModifier != 0 {
@@ -523,58 +434,15 @@ func (p *printer) printCompoundSelector(sel css_ast.CompoundSelector, isFirst bo
 
 		case *css_ast.SSPseudoClass:
 			p.printPseudoClassSelector(*s, whitespace)
-
-		case *css_ast.SSPseudoClassWithSelectorList:
-			p.print(":")
-			p.print(s.Kind.String())
-			p.print("(")
-			if s.Index.A != "" || s.Index.B != "" {
-				p.printNthIndex(s.Index)
-				if len(s.Selectors) > 0 {
-					if p.options.MinifyWhitespace && s.Selectors[0].Selectors[0].TypeSelector == nil {
-						p.print(" of")
-					} else {
-						p.print(" of ")
-					}
-				}
-			}
-			p.printComplexSelectors(s.Selectors, indent, layoutSingleLine)
-			p.print(")")
-
-		default:
-			panic("Internal error")
 		}
-	}
-}
-
-func (p *printer) printNthIndex(index css_ast.NthIndex) {
-	if index.A != "" {
-		if index.A == "-1" {
-			p.print("-")
-		} else if index.A != "1" {
-			p.print(index.A)
-		}
-		p.print("n")
-		if index.B != "" {
-			if !strings.HasPrefix(index.B, "-") {
-				p.print("+")
-			}
-			p.print(index.B)
-		}
-	} else if index.B != "" {
-		p.print(index.B)
 	}
 }
 
 func (p *printer) printNamespacedName(nsName css_ast.NamespacedName, whitespace trailingWhitespace) {
-	if prefix := nsName.NamespacePrefix; prefix != nil {
-		if p.options.AddSourceMappings {
-			p.builder.AddSourceMapping(prefix.Range.Loc, "", p.css)
-		}
-
-		switch prefix.Kind {
+	if nsName.NamespacePrefix != nil {
+		switch nsName.NamespacePrefix.Kind {
 		case css_lexer.TIdent:
-			p.printIdent(prefix.Text, identNormal, canDiscardWhitespaceAfter)
+			p.printIdent(nsName.NamespacePrefix.Text, identNormal, canDiscardWhitespaceAfter)
 		case css_lexer.TDelimAsterisk:
 			p.print("*")
 		default:
@@ -582,10 +450,6 @@ func (p *printer) printNamespacedName(nsName css_ast.NamespacedName, whitespace 
 		}
 
 		p.print("|")
-	}
-
-	if p.options.AddSourceMappings {
-		p.builder.AddSourceMapping(nsName.Name.Range.Loc, "", p.css)
 	}
 
 	switch nsName.Name.Kind {
@@ -660,14 +524,8 @@ func bestQuoteCharForString(text string, forURL bool) byte {
 	return '"'
 }
 
-type printQuotedFlags uint8
-
-const (
-	printQuotedNoWrap printQuotedFlags = 1 << iota
-)
-
-func (p *printer) printQuoted(text string, flags printQuotedFlags) {
-	p.printQuotedWithQuote(text, bestQuoteCharForString(text, false), flags)
+func (p *printer) printQuoted(text string) {
+	p.printQuotedWithQuote(text, bestQuoteCharForString(text, false))
 }
 
 type escapeKind uint8
@@ -718,7 +576,7 @@ func (p *printer) printWithEscape(c rune, escape escapeKind, remainingText strin
 }
 
 // Note: This function is hot in profiles
-func (p *printer) printQuotedWithQuote(text string, quote byte, flags printQuotedFlags) {
+func (p *printer) printQuotedWithQuote(text string, quote byte) {
 	if quote != quoteForURL {
 		p.css = append(p.css, quote)
 	}
@@ -727,28 +585,7 @@ func (p *printer) printQuotedWithQuote(text string, quote byte, flags printQuote
 	i := 0
 	runStart := 0
 
-	// Only compute the line length if necessary
-	var startLineLength int
-	wrapLongLines := false
-	if p.options.LineLimit > 0 && quote != quoteForURL && (flags&printQuotedNoWrap) == 0 {
-		startLineLength = p.currentLineLength()
-		if startLineLength > p.options.LineLimit {
-			startLineLength = p.options.LineLimit
-		}
-		wrapLongLines = true
-	}
-
 	for i < n {
-		// Wrap long lines that are over the limit using escaped newlines
-		if wrapLongLines && startLineLength+i >= p.options.LineLimit {
-			if runStart < i {
-				p.css = append(p.css, text[runStart:i]...)
-				runStart = i
-			}
-			p.css = append(p.css, "\\\n"...)
-			startLineLength -= p.options.LineLimit
-		}
-
 		c, width := utf8.DecodeRuneInString(text[i:])
 		escape := escapeNone
 
@@ -795,34 +632,6 @@ func (p *printer) printQuotedWithQuote(text string, quote byte, flags printQuote
 	if quote != quoteForURL {
 		p.css = append(p.css, quote)
 	}
-}
-
-func (p *printer) currentLineLength() int {
-	css := p.css
-	n := len(css)
-	stop := p.oldLineEnd
-
-	// Update "oldLineStart" to the start of the current line
-	for i := n; i > stop; i-- {
-		if c := css[i-1]; c == '\r' || c == '\n' {
-			p.oldLineStart = i
-			break
-		}
-	}
-
-	p.oldLineEnd = n
-	return n - p.oldLineStart
-}
-
-func (p *printer) printNewlinePastLineLimit(indent int32) bool {
-	if p.currentLineLength() < p.options.LineLimit {
-		return false
-	}
-	p.print("\n")
-	if !p.options.MinifyWhitespace {
-		p.printIndent(indent)
-	}
-	return true
 }
 
 type identMode uint8
@@ -915,104 +724,42 @@ func (p *printer) printIdent(text string, mode identMode, whitespace trailingWhi
 	}
 }
 
-func (p *printer) printSymbol(loc logger.Loc, ref ast.Ref, mode identMode, whitespace trailingWhitespace) {
-	ref = ast.FollowSymbols(p.symbols, ref)
-	originalName := p.symbols.Get(ref).OriginalName
-	name, ok := p.options.LocalNames[ref]
-	if !ok {
-		name = originalName
-	}
-	if p.options.AddSourceMappings {
-		if originalName == name {
-			originalName = ""
-		}
-		p.builder.AddSourceMapping(loc, originalName, p.css)
-	}
-	p.printIdent(name, mode, whitespace)
-}
-
 func (p *printer) printIndent(indent int32) {
-	n := int(indent)
-	if p.options.LineLimit > 0 && n*2 >= p.options.LineLimit {
-		n = p.options.LineLimit / 2
-	}
-	for i := 0; i < n; i++ {
+	for i, n := 0, int(indent); i < n; i++ {
 		p.css = append(p.css, "  "...)
 	}
 }
 
 type printTokensOpts struct {
-	indent               int32
-	multiLineCommaPeriod uint8
-	isDeclaration        bool
-}
-
-func functionMultiLineCommaPeriod(token css_ast.Token) uint8 {
-	if token.Kind == css_lexer.TFunction {
-		commaCount := 0
-		for _, t := range *token.Children {
-			if t.Kind == css_lexer.TComma {
-				commaCount++
-			}
-		}
-
-		switch strings.ToLower(token.Text) {
-		case "linear-gradient", "radial-gradient", "conic-gradient",
-			"repeating-linear-gradient", "repeating-radial-gradient", "repeating-conic-gradient":
-			if commaCount >= 2 {
-				return 1
-			}
-
-		case "matrix":
-			if commaCount == 5 {
-				return 2
-			}
-
-		case "matrix3d":
-			if commaCount == 15 {
-				return 4
-			}
-		}
-	}
-	return 0
+	indent        int32
+	isDeclaration bool
 }
 
 func (p *printer) printTokens(tokens []css_ast.Token, opts printTokensOpts) bool {
 	hasWhitespaceAfter := len(tokens) > 0 && (tokens[0].Whitespace&css_ast.WhitespaceBefore) != 0
 
 	// Pretty-print long comma-separated declarations of 3 or more items
-	commaPeriod := int(opts.multiLineCommaPeriod)
+	isMultiLineValue := false
 	if !p.options.MinifyWhitespace && opts.isDeclaration {
 		commaCount := 0
 		for _, t := range tokens {
 			if t.Kind == css_lexer.TComma {
 				commaCount++
-				if commaCount >= 2 {
-					commaPeriod = 1
-					break
-				}
-			}
-			if t.Kind == css_lexer.TFunction && functionMultiLineCommaPeriod(t) > 0 {
-				commaPeriod = 1
-				break
 			}
 		}
+		isMultiLineValue = commaCount >= 2
 	}
 
-	commaCount := 0
 	for i, t := range tokens {
-		if t.Kind == css_lexer.TComma {
-			commaCount++
-		}
 		if t.Kind == css_lexer.TWhitespace {
 			hasWhitespaceAfter = true
 			continue
 		}
 		if hasWhitespaceAfter {
-			if commaPeriod > 0 && (i == 0 || (tokens[i-1].Kind == css_lexer.TComma && commaCount%commaPeriod == 0)) {
+			if isMultiLineValue && (i == 0 || tokens[i-1].Kind == css_lexer.TComma) {
 				p.print("\n")
 				p.printIndent(opts.indent + 1)
-			} else if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit(opts.indent+1) {
+			} else {
 				p.print(" ")
 			}
 		}
@@ -1024,17 +771,9 @@ func (p *printer) printTokens(tokens []css_ast.Token, opts printTokensOpts) bool
 			whitespace = canDiscardWhitespaceAfter
 		}
 
-		if p.options.AddSourceMappings {
-			p.builder.AddSourceMapping(t.Loc, "", p.css)
-		}
-
 		switch t.Kind {
 		case css_lexer.TIdent:
 			p.printIdent(t.Text, identNormal, whitespace)
-
-		case css_lexer.TSymbol:
-			ref := ast.Ref{SourceIndex: p.options.InputSourceIndex, InnerIndex: t.PayloadIndex}
-			p.printSymbol(t.Loc, ref, identNormal, whitespace)
 
 		case css_lexer.TFunction:
 			p.printIdent(t.Text, identNormal, whitespace)
@@ -1058,29 +797,14 @@ func (p *printer) printTokens(tokens []css_ast.Token, opts printTokensOpts) bool
 			p.printIdent(t.Text, identHash, whitespace)
 
 		case css_lexer.TString:
-			p.printQuoted(t.Text, 0)
+			p.printQuoted(t.Text)
 
 		case css_lexer.TURL:
-			record := p.importRecords[t.PayloadIndex]
-			text := record.Path.Text
-			tryToAvoidQuote := true
-			var flags printQuotedFlags
-			if record.Flags.Has(ast.ContainsUniqueKey) {
-				flags |= printQuotedNoWrap
-
-				// If the caller will be substituting a path here later using string
-				// substitution, then we can't be sure that it will form a valid URL
-				// token when unquoted (e.g. it may contain spaces). So we need to
-				// quote the unique key here just in case. For more info see this
-				// issue: https://github.com/evanw/esbuild/issues/3410
-				tryToAvoidQuote = false
-			} else if p.options.LineLimit > 0 && p.currentLineLength()+len(text) >= p.options.LineLimit {
-				tryToAvoidQuote = false
-			}
+			text := p.importRecords[t.ImportRecordIndex].Path.Text
 			p.print("url(")
-			p.printQuotedWithQuote(text, bestQuoteCharForString(text, tryToAvoidQuote), flags)
+			p.printQuotedWithQuote(text, bestQuoteCharForString(text, true))
 			p.print(")")
-			p.recordImportPathForMetafile(t.PayloadIndex)
+			p.recordImportPathForMetafile(t.ImportRecordIndex)
 
 		case css_lexer.TUnterminatedString:
 			// We must end this with a newline so that this string stays unterminated
@@ -1096,28 +820,7 @@ func (p *printer) printTokens(tokens []css_ast.Token, opts printTokensOpts) bool
 		}
 
 		if t.Children != nil {
-			childCommaPeriod := uint8(0)
-
-			if commaPeriod > 0 && opts.isDeclaration {
-				childCommaPeriod = functionMultiLineCommaPeriod(t)
-			}
-
-			if childCommaPeriod > 0 {
-				opts.indent++
-				if !p.options.MinifyWhitespace {
-					p.print("\n")
-					p.printIndent(opts.indent + 1)
-				}
-			}
-
-			p.printTokens(*t.Children, printTokensOpts{
-				indent:               opts.indent,
-				multiLineCommaPeriod: childCommaPeriod,
-			})
-
-			if childCommaPeriod > 0 {
-				opts.indent--
-			}
+			p.printTokens(*t.Children, printTokensOpts{})
 
 			switch t.Kind {
 			case css_lexer.TFunction:

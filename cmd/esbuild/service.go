@@ -383,9 +383,6 @@ func (service *serviceType) handleIncomingPacket(bytes []byte) {
 					if value, ok := request["certfile"]; ok {
 						options.Certfile = value.(string)
 					}
-					if value, ok := request["fallback"]; ok {
-						options.Fallback = value.(string)
-					}
 					if request["onRequest"].(bool) {
 						options.OnRequest = func(args api.ServeOnRequestArgs) {
 							// This could potentially be called after we return from
@@ -789,8 +786,6 @@ func resolveKindToString(kind api.ResolveKind) string {
 	// CSS
 	case api.ResolveCSSImportRule:
 		return "import-rule"
-	case api.ResolveCSSComposesFrom:
-		return "composes-from"
 	case api.ResolveCSSURLToken:
 		return "url-token"
 
@@ -817,8 +812,6 @@ func stringToResolveKind(kind string) (api.ResolveKind, bool) {
 	// CSS
 	case "import-rule":
 		return api.ResolveCSSImportRule, true
-	case "composes-from":
-		return api.ResolveCSSComposesFrom, true
 	case "url-token":
 		return api.ResolveCSSURLToken, true
 	}
@@ -1055,11 +1048,6 @@ func (service *serviceType) convertPlugins(key int, jsPlugins interface{}, activ
 						return result, nil
 					}
 
-					with := make(map[string]interface{})
-					for k, v := range args.With {
-						with[k] = v
-					}
-
 					response, ok := service.sendRequest(map[string]interface{}{
 						"command":    "on-load",
 						"key":        key,
@@ -1068,7 +1056,6 @@ func (service *serviceType) convertPlugins(key int, jsPlugins interface{}, activ
 						"namespace":  args.Namespace,
 						"suffix":     args.Suffix,
 						"pluginData": args.PluginData,
-						"with":       with,
 					}).(map[string]interface{})
 					if !ok {
 						return result, errors.New("The service was stopped")
@@ -1270,7 +1257,6 @@ func encodeOutputFiles(outputFiles []api.OutputFile) []interface{} {
 		values[i] = value
 		value["path"] = outputFile.Path
 		value["contents"] = outputFile.Contents
-		value["hash"] = outputFile.Hash
 	}
 	return values
 }

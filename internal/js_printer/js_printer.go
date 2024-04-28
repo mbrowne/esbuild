@@ -61,30 +61,13 @@ func QuoteIdentifier(js []byte, name string, unsupportedFeatures compat.JSFeatur
 	return js
 }
 
-func (p *printer) printUnquotedUTF16(text []uint16, quote rune, flags printQuotedFlags) {
+func (p *printer) printUnquotedUTF16(text []uint16, quote rune) {
 	temp := make([]byte, utf8.UTFMax)
 	js := p.js
 	i := 0
 	n := len(text)
 
-	// Only compute the line length if necessary
-	var startLineLength int
-	wrapLongLines := false
-	if p.options.LineLimit > 0 && (flags&printQuotedNoWrap) == 0 {
-		startLineLength = p.currentLineLength()
-		if startLineLength > p.options.LineLimit {
-			startLineLength = p.options.LineLimit
-		}
-		wrapLongLines = true
-	}
-
 	for i < n {
-		// Wrap long lines that are over the limit using escaped newlines
-		if wrapLongLines && startLineLength+i >= p.options.LineLimit {
-			js = append(js, "\\\n"...)
-			startLineLength -= p.options.LineLimit
-		}
-
 		c := text[i]
 		i++
 
@@ -114,7 +97,6 @@ func (p *printer) printUnquotedUTF16(text []uint16, quote rune, flags printQuote
 
 		case '\n':
 			if quote == '`' {
-				startLineLength = -i // Printing a real newline resets the line length
 				js = append(js, '\n')
 			} else {
 				js = append(js, "\\n"...)
@@ -246,6 +228,80 @@ func (p *printer) printUnquotedUTF16(text []uint16, quote rune, flags printQuote
 	p.js = js
 }
 
+// Use JS strings for JSX attributes that need escape characters. Technically
+// the JSX specification doesn't say anything about using XML character escape
+// sequences, so JSX implementations may not be able to consume them. See
+// https://facebook.github.io/jsx/ for the specification.
+func (p *printer) canPrintTextAsJSXAttribute(text []uint16) (quote string, ok bool) {
+	single := true
+	double := true
+
+	for _, c := range text {
+		// Use JS strings for control characters
+		if c < firstASCII {
+			return "", false
+		}
+
+		// Use JS strings if we need to escape non-ASCII characters
+		if p.options.ASCIIOnly && c > lastASCII {
+			return "", false
+		}
+
+		switch c {
+		case '&':
+			// Use JS strings if the text would need to be escaped with "&amp;"
+			return "", false
+
+		case '"':
+			double = false
+			if !single {
+				break
+			}
+
+		case '\'':
+			single = false
+			if !double {
+				break
+			}
+		}
+	}
+
+	// Prefer duble quotes to single quotes
+	if double {
+		return "\"", true
+	}
+	if single {
+		return "'", true
+	}
+	return "", false
+}
+
+// Use JS strings for text inside JSX elements that need escape characters.
+// Technically the JSX specification doesn't say anything about using XML
+// character escape sequences, so JSX implementations may not be able to
+// consume them. See https://facebook.github.io/jsx/ for the specification.
+func (p *printer) canPrintTextAsJSXChild(text []uint16) bool {
+	for _, c := range text {
+		// Use JS strings for control characters
+		if c < firstASCII {
+			return false
+		}
+
+		// Use JS strings if we need to escape non-ASCII characters
+		if p.options.ASCIIOnly && c > lastASCII {
+			return false
+		}
+
+		switch c {
+		case '&', '<', '>', '{', '}':
+			// Use JS strings if the text would need to be escaped
+			return false
+		}
+	}
+
+	return true
+}
+
 // JSX tag syntax doesn't support character escapes so non-ASCII identifiers
 // must be printed as UTF-8 even when the charset is set to ASCII.
 func (p *printer) printJSXTag(tagOrNil js_ast.Expr) {
@@ -273,8 +329,8 @@ func (p *printer) printJSXTag(tagOrNil js_ast.Expr) {
 }
 
 type printer struct {
-	symbols                ast.SymbolMap
-	astHelpers             js_ast.HelperContext
+	symbols                js_ast.SymbolMap
+	isUnbound              func(js_ast.Ref) bool
 	renamer                renamer.Renamer
 	importRecords          []ast.ImportRecord
 	callTarget             js_ast.E
@@ -293,16 +349,12 @@ type printer struct {
 	arrowExprStart     int
 	forOfInitStart     int
 
-	withNesting          int
 	prevOpEnd            int
 	needSpaceBeforeDot   int
 	prevRegExpEnd        int
 	noLeadingNewlineHere int
-	oldLineStart         int
-	oldLineEnd           int
 	intToBytesBuffer     [64]byte
 	needsSemicolon       bool
-	wasLazyExport        bool
 	prevOp               js_ast.OpCode
 	moduleType           js_ast.ModuleType
 }
@@ -317,15 +369,8 @@ func (p *printer) printBytes(bytes []byte) {
 	p.js = append(p.js, bytes...)
 }
 
-type printQuotedFlags uint8
-
-const (
-	printQuotedAllowBacktick printQuotedFlags = 1 << iota
-	printQuotedNoWrap
-)
-
-func (p *printer) printQuotedUTF8(text string, flags printQuotedFlags) {
-	p.printQuotedUTF16(helpers.StringToUTF16(text), flags)
+func (p *printer) printQuotedUTF8(text string, allowBacktick bool) {
+	p.printQuotedUTF16(helpers.StringToUTF16(text), allowBacktick)
 }
 
 func (p *printer) addSourceMapping(loc logger.Loc) {
@@ -334,9 +379,9 @@ func (p *printer) addSourceMapping(loc logger.Loc) {
 	}
 }
 
-func (p *printer) addSourceMappingForName(loc logger.Loc, name string, ref ast.Ref) {
+func (p *printer) addSourceMappingForName(loc logger.Loc, name string, ref js_ast.Ref) {
 	if p.options.AddSourceMappings {
-		if originalName := p.symbols.Get(ast.FollowSymbols(p.symbols, ref)).OriginalName; originalName != name {
+		if originalName := p.symbols.Get(js_ast.FollowSymbols(p.symbols, ref)).OriginalName; originalName != name {
 			p.builder.AddSourceMapping(loc, originalName, p.js)
 		} else {
 			p.builder.AddSourceMapping(loc, "", p.js)
@@ -346,59 +391,26 @@ func (p *printer) addSourceMappingForName(loc logger.Loc, name string, ref ast.R
 
 func (p *printer) printIndent() {
 	if !p.options.MinifyWhitespace {
-		indent := p.options.Indent
-		if p.options.LineLimit > 0 && indent*2 >= p.options.LineLimit {
-			indent = p.options.LineLimit / 2
-		}
-		for i := 0; i < indent; i++ {
+		for i := 0; i < p.options.Indent; i++ {
 			p.print("  ")
 		}
 	}
 }
 
-func (p *printer) mangledPropName(ref ast.Ref) string {
-	ref = ast.FollowSymbols(p.symbols, ref)
+func (p *printer) mangledPropName(ref js_ast.Ref) string {
+	ref = js_ast.FollowSymbols(p.symbols, ref)
 	if name, ok := p.options.MangledProps[ref]; ok {
 		return name
 	}
 	return p.renamer.NameForSymbol(ref)
 }
 
-func (p *printer) tryToGetImportedEnumValue(target js_ast.Expr, name string) (js_ast.TSEnumValue, bool) {
-	if id, ok := target.Data.(*js_ast.EImportIdentifier); ok {
-		ref := ast.FollowSymbols(p.symbols, id.Ref)
-		if symbol := p.symbols.Get(ref); symbol.Kind == ast.SymbolTSEnum {
-			if enum, ok := p.options.TSEnums[ref]; ok {
-				value, ok := enum[name]
-				return value, ok
-			}
-		}
-	}
-	return js_ast.TSEnumValue{}, false
-}
-
-func (p *printer) tryToGetImportedEnumValueUTF16(target js_ast.Expr, name []uint16) (js_ast.TSEnumValue, string, bool) {
-	if id, ok := target.Data.(*js_ast.EImportIdentifier); ok {
-		ref := ast.FollowSymbols(p.symbols, id.Ref)
-		if symbol := p.symbols.Get(ref); symbol.Kind == ast.SymbolTSEnum {
-			if enum, ok := p.options.TSEnums[ref]; ok {
-				name := helpers.UTF16ToString(name)
-				value, ok := enum[name]
-				return value, name, ok
-			}
-		}
-	}
-	return js_ast.TSEnumValue{}, "", false
-}
-
-func (p *printer) printClauseAlias(loc logger.Loc, alias string) {
+func (p *printer) printClauseAlias(alias string) {
 	if js_ast.IsIdentifier(alias) {
 		p.printSpaceBeforeIdentifier()
-		p.addSourceMapping(loc)
 		p.printIdentifier(alias)
 	} else {
-		p.addSourceMapping(loc)
-		p.printQuotedUTF8(alias, 0)
+		p.printQuotedUTF8(alias, false /* allowBacktick */)
 	}
 }
 
@@ -476,26 +488,9 @@ func (p *printer) printNumber(value float64, level js_ast.L) {
 
 	if value != value {
 		p.printSpaceBeforeIdentifier()
-		if p.withNesting != 0 {
-			// "with (x) NaN" really means "x.NaN" so avoid identifiers when "with" is present
-			wrap := level >= js_ast.LMultiply
-			if wrap {
-				p.print("(")
-			}
-			if p.options.MinifyWhitespace {
-				p.print("0/0")
-			} else {
-				p.print("0 / 0")
-			}
-			if wrap {
-				p.print(")")
-			}
-		} else {
-			p.print("NaN")
-		}
+		p.print("NaN")
 	} else if value == positiveInfinity || value == negativeInfinity {
-		// "with (x) Infinity" really means "x.Infinity" so avoid identifiers when "with" is present
-		wrap := ((p.options.MinifySyntax || p.withNesting != 0) && level >= js_ast.LMultiply) ||
+		wrap := (p.options.MinifySyntax && level >= js_ast.LMultiply) ||
 			(value == negativeInfinity && level >= js_ast.LPrefix)
 		if wrap {
 			p.print("(")
@@ -506,7 +501,7 @@ func (p *printer) printNumber(value float64, level js_ast.L) {
 		} else {
 			p.printSpaceBeforeIdentifier()
 		}
-		if !p.options.MinifySyntax && p.withNesting == 0 {
+		if !p.options.MinifySyntax {
 			p.print("Infinity")
 		} else if p.options.MinifyWhitespace {
 			p.print("1/0")
@@ -580,14 +575,13 @@ func (p *printer) printBinding(binding js_ast.Binding) {
 			for i, item := range b.Items {
 				if i != 0 {
 					p.print(",")
-				}
-				if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-					if isMultiLine {
-						p.printNewline()
-						p.printIndent()
-					} else if i != 0 {
+					if !isMultiLine {
 						p.printSpace()
 					}
+				}
+				if isMultiLine {
+					p.printNewline()
+					p.printIndent()
 				}
 				p.printExprCommentsAtLoc(item.Loc)
 				if b.HasSpread && i+1 == len(b.Items) {
@@ -641,13 +635,11 @@ func (p *printer) printBinding(binding js_ast.Binding) {
 				if i != 0 {
 					p.print(",")
 				}
-				if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-					if isMultiLine {
-						p.printNewline()
-						p.printIndent()
-					} else {
-						p.printSpace()
-					}
+				if isMultiLine {
+					p.printNewline()
+					p.printIndent()
+				} else {
+					p.printSpace()
 				}
 
 				p.printExprCommentsAtLoc(property.Loc)
@@ -709,7 +701,7 @@ func (p *printer) printBinding(binding js_ast.Binding) {
 
 						p.addSourceMapping(property.Key.Loc)
 						p.printIdentifierUTF16(str.Value)
-					} else if mangled, ok := property.Key.Data.(*js_ast.ENameOfSymbol); ok {
+					} else if mangled, ok := property.Key.Data.(*js_ast.EMangledProp); ok {
 						if name := p.mangledPropName(mangled.Ref); p.canPrintIdentifier(name) {
 							p.addSourceMappingForName(property.Key.Loc, name, mangled.Ref)
 							p.printIdentifier(name)
@@ -728,7 +720,7 @@ func (p *printer) printBinding(binding js_ast.Binding) {
 							}
 						} else {
 							p.addSourceMapping(property.Key.Loc)
-							p.printQuotedUTF8(name, 0)
+							p.printQuotedUTF8(name, false /* allowBacktick */)
 						}
 					} else {
 						p.printExpr(property.Key, js_ast.LLowest, 0)
@@ -775,32 +767,6 @@ func (p *printer) printNewline() {
 	if !p.options.MinifyWhitespace {
 		p.print("\n")
 	}
-}
-
-func (p *printer) currentLineLength() int {
-	js := p.js
-	n := len(js)
-	stop := p.oldLineEnd
-
-	// Update "oldLineStart" to the start of the current line
-	for i := n; i > stop; i-- {
-		if c := js[i-1]; c == '\r' || c == '\n' {
-			p.oldLineStart = i
-			break
-		}
-	}
-
-	p.oldLineEnd = n
-	return n - p.oldLineStart
-}
-
-func (p *printer) printNewlinePastLineLimit() bool {
-	if p.currentLineLength() < p.options.LineLimit {
-		return false
-	}
-	p.print("\n")
-	p.printIndent()
-	return true
 }
 
 func (p *printer) printSpaceBeforeOperator(next js_ast.OpCode) {
@@ -873,7 +839,7 @@ func (p *printer) printFnArgs(args []js_ast.Arg, opts fnArgsOpts) {
 			p.print(",")
 			p.printSpace()
 		}
-		p.printDecorators(arg.Decorators, printSpaceAfterDecorator)
+		p.printDecorators(arg.Decorators, printDecoratorsAllOnOneLine)
 		if opts.hasRestArg && i+1 == len(args) {
 			p.print("...")
 		}
@@ -898,40 +864,24 @@ func (p *printer) printFn(fn js_ast.Fn) {
 	p.printBlock(fn.Body.Loc, fn.Body.Block)
 }
 
-type printAfterDecorator uint8
+type printDecorators uint8
 
 const (
-	printNewlineAfterDecorator printAfterDecorator = iota
-	printSpaceAfterDecorator
+	printDecoratorsOnSeparateLines printDecorators = iota
+	printDecoratorsAllOnOneLine
 )
 
-func (p *printer) printDecorators(decorators []js_ast.Decorator, defaultMode printAfterDecorator) (omitIndentAfter bool) {
-	oldMode := defaultMode
-
+func (p *printer) printDecorators(decorators []js_ast.Decorator, how printDecorators) {
 	for _, decorator := range decorators {
 		wrap := false
-		wasCallTarget := false
 		expr := decorator.Value
-		mode := defaultMode
-		if decorator.OmitNewlineAfter {
-			mode = printSpaceAfterDecorator
-		}
 
 	outer:
 		for {
-			isCallTarget := wasCallTarget
-			wasCallTarget = false
-
 			switch e := expr.Data.(type) {
-			case *js_ast.EIdentifier:
+			case *js_ast.EIdentifier, *js_ast.ECall:
 				// "@foo"
 				break outer
-
-			case *js_ast.ECall:
-				// "@foo()"
-				expr = e.Target
-				wasCallTarget = true
-				continue
 
 			case *js_ast.EDot:
 				// "@foo.bar"
@@ -953,29 +903,6 @@ func (p *printer) printDecorators(decorators []js_ast.Decorator, defaultMode pri
 				// "@(foo[bar])"
 				break
 
-			case *js_ast.EImportIdentifier:
-				ref := ast.FollowSymbols(p.symbols, e.Ref)
-				symbol := p.symbols.Get(ref)
-
-				if symbol.ImportItemStatus == ast.ImportItemMissing {
-					// "@(void 0)"
-					break
-				}
-
-				if symbol.NamespaceAlias != nil && isCallTarget && e.WasOriginallyIdentifier {
-					// "@((0, import_ns.fn)())"
-					break
-				}
-
-				if value := p.options.ConstValues[ref]; value.Kind != js_ast.ConstValueNone {
-					// "@(<inlined constant>)"
-					break
-				}
-
-				// "@foo"
-				// "@import_ns.fn"
-				break outer
-
 			default:
 				// "@(foo + bar)"
 				// "@(() => {})"
@@ -987,7 +914,7 @@ func (p *printer) printDecorators(decorators []js_ast.Decorator, defaultMode pri
 		}
 
 		p.addSourceMapping(decorator.AtLoc)
-		if oldMode == printNewlineAfterDecorator {
+		if how == printDecoratorsOnSeparateLines {
 			p.printIndent()
 		}
 
@@ -1000,18 +927,14 @@ func (p *printer) printDecorators(decorators []js_ast.Decorator, defaultMode pri
 			p.print(")")
 		}
 
-		switch mode {
-		case printNewlineAfterDecorator:
+		switch how {
+		case printDecoratorsOnSeparateLines:
 			p.printNewline()
 
-		case printSpaceAfterDecorator:
+		case printDecoratorsAllOnOneLine:
 			p.printSpace()
 		}
-		oldMode = mode
 	}
-
-	omitIndentAfter = oldMode == printSpaceAfterDecorator
-	return
 }
 
 func (p *printer) printClass(class js_ast.Class) {
@@ -1029,10 +952,8 @@ func (p *printer) printClass(class js_ast.Class) {
 
 	for _, item := range class.Properties {
 		p.printSemicolonIfNeeded()
-		omitIndent := p.printDecorators(item.Decorators, printNewlineAfterDecorator)
-		if !omitIndent {
-			p.printIndent()
-		}
+		p.printDecorators(item.Decorators, printDecoratorsOnSeparateLines)
+		p.printIndent()
 
 		if item.Kind == js_ast.PropertyClassStaticBlock {
 			p.addSourceMapping(item.Loc)
@@ -1076,19 +997,26 @@ func (p *printer) printProperty(property js_ast.Property) {
 	// Handle key syntax compression for cross-module constant inlining of enums
 	if p.options.MinifySyntax && property.Flags.Has(js_ast.PropertyIsComputed) {
 		if dot, ok := property.Key.Data.(*js_ast.EDot); ok {
-			if value, ok := p.tryToGetImportedEnumValue(dot.Target, dot.Name); ok {
-				if value.String != nil {
-					property.Key.Data = &js_ast.EString{Value: value.String}
+			if id, ok := dot.Target.Data.(*js_ast.EImportIdentifier); ok {
+				ref := js_ast.FollowSymbols(p.symbols, id.Ref)
+				if symbol := p.symbols.Get(ref); symbol.Kind == js_ast.SymbolTSEnum {
+					if enum, ok := p.options.TSEnums[ref]; ok {
+						if value, ok := enum[dot.Name]; ok {
+							if value.String != nil {
+								property.Key.Data = &js_ast.EString{Value: value.String}
 
-					// Problematic key names must stay computed for correctness
-					if !helpers.UTF16EqualsString(value.String, "__proto__") &&
-						!helpers.UTF16EqualsString(value.String, "constructor") &&
-						!helpers.UTF16EqualsString(value.String, "prototype") {
-						property.Flags &= ^js_ast.PropertyIsComputed
+								// Problematic key names must stay computed for correctness
+								if !helpers.UTF16EqualsString(value.String, "__proto__") &&
+									!helpers.UTF16EqualsString(value.String, "constructor") &&
+									!helpers.UTF16EqualsString(value.String, "prototype") {
+									property.Flags &= ^js_ast.PropertyIsComputed
+								}
+							} else {
+								property.Key.Data = &js_ast.ENumber{Value: value.Number}
+								property.Flags &= ^js_ast.PropertyIsComputed
+							}
+						}
 					}
-				} else {
-					property.Key.Data = &js_ast.ENumber{Value: value.Number}
-					property.Flags &= ^js_ast.PropertyIsComputed
 				}
 			}
 		}
@@ -1194,7 +1122,7 @@ func (p *printer) printProperty(property js_ast.Property) {
 		p.addSourceMappingForName(property.Key.Loc, name, key.Ref)
 		p.printIdentifier(name)
 
-	case *js_ast.ENameOfSymbol:
+	case *js_ast.EMangledProp:
 		if name := p.mangledPropName(key.Ref); p.canPrintIdentifier(name) {
 			p.printSpaceBeforeIdentifier()
 			p.addSourceMappingForName(property.Key.Loc, name, key.Ref)
@@ -1216,7 +1144,7 @@ func (p *printer) printProperty(property js_ast.Property) {
 
 				case *js_ast.EImportIdentifier:
 					// Make sure we're not using a property access instead of an identifier
-					ref := ast.FollowSymbols(p.symbols, e.Ref)
+					ref := js_ast.FollowSymbols(p.symbols, e.Ref)
 					if symbol := p.symbols.Get(ref); symbol.NamespaceAlias == nil && name == p.renamer.NameForSymbol(ref) &&
 						p.options.ConstValues[ref].Kind == js_ast.ConstValueNone {
 						if property.InitializerOrNil.Data != nil {
@@ -1231,7 +1159,7 @@ func (p *printer) printProperty(property js_ast.Property) {
 			}
 		} else {
 			p.addSourceMapping(property.Key.Loc)
-			p.printQuotedUTF8(name, 0)
+			p.printQuotedUTF8(name, false /* allowBacktick */)
 		}
 
 	case *js_ast.EString:
@@ -1242,7 +1170,7 @@ func (p *printer) printProperty(property js_ast.Property) {
 			if !p.options.UnsupportedFeatures.Has(compat.ObjectExtensions) && property.ValueOrNil.Data != nil && !p.willPrintExprCommentsAtLoc(property.ValueOrNil.Loc) {
 				switch e := property.ValueOrNil.Data.(type) {
 				case *js_ast.EIdentifier:
-					if canUseShorthandProperty(key.Value, p.renamer.NameForSymbol(e.Ref), property.Flags) {
+					if helpers.UTF16EqualsString(key.Value, p.renamer.NameForSymbol(e.Ref)) {
 						if p.options.AddSourceMappings {
 							p.addSourceMappingForName(property.Key.Loc, helpers.UTF16ToString(key.Value), e.Ref)
 						}
@@ -1258,8 +1186,8 @@ func (p *printer) printProperty(property js_ast.Property) {
 
 				case *js_ast.EImportIdentifier:
 					// Make sure we're not using a property access instead of an identifier
-					ref := ast.FollowSymbols(p.symbols, e.Ref)
-					if symbol := p.symbols.Get(ref); symbol.NamespaceAlias == nil && canUseShorthandProperty(key.Value, p.renamer.NameForSymbol(ref), property.Flags) &&
+					ref := js_ast.FollowSymbols(p.symbols, e.Ref)
+					if symbol := p.symbols.Get(ref); symbol.NamespaceAlias == nil && helpers.UTF16EqualsString(key.Value, p.renamer.NameForSymbol(ref)) &&
 						p.options.ConstValues[ref].Kind == js_ast.ConstValueNone {
 						if p.options.AddSourceMappings {
 							p.addSourceMappingForName(property.Key.Loc, helpers.UTF16ToString(key.Value), ref)
@@ -1276,26 +1204,11 @@ func (p *printer) printProperty(property js_ast.Property) {
 				}
 			}
 
-			// The JavaScript specification special-cases the property identifier
-			// "__proto__" with a colon after it to set the prototype of the object.
-			// If we keep the identifier but add a colon then we'll cause a behavior
-			// change because the prototype will now be set. Avoid using an identifier
-			// by using a computed property with a string instead. For more info see:
-			// https://tc39.es/ecma262/#sec-runtime-semantics-propertydefinitionevaluation
-			if property.Flags.Has(js_ast.PropertyWasShorthand) && !p.options.UnsupportedFeatures.Has(compat.ObjectExtensions) &&
-				helpers.UTF16EqualsString(key.Value, "__proto__") {
-				p.print("[")
-				p.addSourceMapping(property.Key.Loc)
-				p.printQuotedUTF16(key.Value, 0)
-				p.print("]")
-				break
-			}
-
 			p.addSourceMapping(property.Key.Loc)
 			p.printIdentifierUTF16(key.Value)
 		} else {
 			p.addSourceMapping(property.Key.Loc)
-			p.printQuotedUTF16(key.Value, 0)
+			p.printQuotedUTF16(key.Value, false /* allowBacktick */)
 		}
 
 	default:
@@ -1329,23 +1242,9 @@ func (p *printer) printProperty(property js_ast.Property) {
 	}
 }
 
-func canUseShorthandProperty(key []uint16, name string, flags js_ast.PropertyFlags) bool {
-	// The JavaScript specification special-cases the property identifier
-	// "__proto__" with a colon after it to set the prototype of the object. If
-	// we remove the colon then we'll cause a behavior change because the
-	// prototype will no longer be set, but we also don't want to add a colon
-	// if it was omitted. Always use a shorthand property if the property is not
-	// "__proto__", otherwise try to preserve the original shorthand status. See:
-	// https://tc39.es/ecma262/#sec-runtime-semantics-propertydefinitionevaluation
-	if !helpers.UTF16EqualsString(key, name) {
-		return false
-	}
-	return helpers.UTF16EqualsString(key, name) && (name != "__proto__" || flags.Has(js_ast.PropertyWasShorthand))
-}
-
-func (p *printer) printQuotedUTF16(data []uint16, flags printQuotedFlags) {
+func (p *printer) printQuotedUTF16(data []uint16, allowBacktick bool) {
 	if p.options.UnsupportedFeatures.Has(compat.TemplateLiteral) {
-		flags &= ^printQuotedAllowBacktick
+		allowBacktick = false
 	}
 
 	singleCost := 0
@@ -1377,15 +1276,15 @@ func (p *printer) printQuotedUTF16(data []uint16, flags printQuotedFlags) {
 	c := "\""
 	if doubleCost > singleCost {
 		c = "'"
-		if singleCost > backtickCost && (flags&printQuotedAllowBacktick) != 0 {
+		if singleCost > backtickCost && allowBacktick {
 			c = "`"
 		}
-	} else if doubleCost > backtickCost && (flags&printQuotedAllowBacktick) != 0 {
+	} else if doubleCost > backtickCost && allowBacktick {
 		c = "`"
 	}
 
 	p.print(c)
-	p.printUnquotedUTF16(data, rune(c[0]), flags)
+	p.printUnquotedUTF16(data, rune(c[0]))
 	p.print(c)
 }
 
@@ -1488,11 +1387,10 @@ func (p *printer) printRequireOrImportExpr(importRecordIndex uint32, level js_as
 		}
 		isMultiLine := p.willPrintExprCommentsAtLoc(record.Range.Loc) ||
 			p.willPrintExprCommentsAtLoc(closeParenLoc) ||
-			(record.AssertOrWith != nil &&
+			(record.Assertions != nil &&
 				!p.options.UnsupportedFeatures.Has(compat.DynamicImport) &&
-				(!p.options.UnsupportedFeatures.Has(compat.ImportAssertions) ||
-					!p.options.UnsupportedFeatures.Has(compat.ImportAttributes)) &&
-				p.willPrintExprCommentsAtLoc(record.AssertOrWith.OuterOpenBraceLoc))
+				!p.options.UnsupportedFeatures.Has(compat.ImportAssertions) &&
+				p.willPrintExprCommentsAtLoc(record.Assertions.OuterOpenBraceLoc))
 		if isMultiLine {
 			p.printNewline()
 			p.options.Indent++
@@ -1501,7 +1399,7 @@ func (p *printer) printRequireOrImportExpr(importRecordIndex uint32, level js_as
 		p.printExprCommentsAtLoc(record.Range.Loc)
 		p.printPath(importRecordIndex, kind)
 		if !p.options.UnsupportedFeatures.Has(compat.DynamicImport) {
-			p.printImportCallAssertOrWith(record.AssertOrWith, isMultiLine)
+			p.printImportCallAssertions(record.Assertions, isMultiLine)
 		}
 		if isMultiLine {
 			p.printNewline()
@@ -1520,7 +1418,7 @@ func (p *printer) printRequireOrImportExpr(importRecordIndex uint32, level js_as
 
 	// Don't need the namespace object if the result is unused anyway
 	if (flags & exprResultIsUnused) != 0 {
-		meta.ExportsRef = ast.InvalidRef
+		meta.ExportsRef = js_ast.InvalidRef
 	}
 
 	// Internal "import()" of async ESM
@@ -1528,7 +1426,7 @@ func (p *printer) printRequireOrImportExpr(importRecordIndex uint32, level js_as
 		p.printSpaceBeforeIdentifier()
 		p.printIdentifier(p.renamer.NameForSymbol(meta.WrapperRef))
 		p.print("()")
-		if meta.ExportsRef != ast.InvalidRef {
+		if meta.ExportsRef != js_ast.InvalidRef {
 			p.printDotThenPrefix()
 			p.printSpaceBeforeIdentifier()
 			p.printIdentifier(p.renamer.NameForSymbol(meta.ExportsRef))
@@ -1545,8 +1443,8 @@ func (p *printer) printRequireOrImportExpr(importRecordIndex uint32, level js_as
 		defer p.printDotThenSuffix()
 	}
 
-	// Make sure the comma operator is properly wrapped
-	if meta.ExportsRef != ast.InvalidRef && level >= js_ast.LComma {
+	// Make sure the comma operator is propertly wrapped
+	if meta.ExportsRef != js_ast.InvalidRef && level >= js_ast.LComma {
 		p.print("(")
 		defer p.print(")")
 	}
@@ -1565,7 +1463,7 @@ func (p *printer) printRequireOrImportExpr(importRecordIndex uint32, level js_as
 	p.print("()")
 
 	// Return the namespace object if this is an ESM file
-	if meta.ExportsRef != ast.InvalidRef {
+	if meta.ExportsRef != js_ast.InvalidRef {
 		p.print(",")
 		p.printSpace()
 
@@ -1669,32 +1567,32 @@ func (p *printer) simplifyUnusedExpr(expr js_ast.Expr) js_ast.Expr {
 		}
 
 	case *js_ast.ECall:
-		var symbolFlags ast.SymbolFlags
+		var symbolFlags js_ast.SymbolFlags
 		switch target := e.Target.Data.(type) {
 		case *js_ast.EIdentifier:
 			symbolFlags = p.symbols.Get(target.Ref).Flags
 		case *js_ast.EImportIdentifier:
-			ref := ast.FollowSymbols(p.symbols, target.Ref)
+			ref := js_ast.FollowSymbols(p.symbols, target.Ref)
 			symbolFlags = p.symbols.Get(ref).Flags
 		}
 
 		// Replace non-mutated empty functions with their arguments at print time
-		if (symbolFlags & (ast.IsEmptyFunction | ast.CouldPotentiallyBeMutated)) == ast.IsEmptyFunction {
+		if (symbolFlags & (js_ast.IsEmptyFunction | js_ast.CouldPotentiallyBeMutated)) == js_ast.IsEmptyFunction {
 			var replacement js_ast.Expr
 			for _, arg := range e.Args {
 				if _, ok := arg.Data.(*js_ast.ESpread); ok {
 					arg.Data = &js_ast.EArray{Items: []js_ast.Expr{arg}, IsSingleLine: true}
 				}
-				replacement = js_ast.JoinWithComma(replacement, p.astHelpers.SimplifyUnusedExpr(p.simplifyUnusedExpr(arg), p.options.UnsupportedFeatures))
+				replacement = js_ast.JoinWithComma(replacement, js_ast.SimplifyUnusedExpr(p.simplifyUnusedExpr(arg), p.options.UnsupportedFeatures, p.isUnbound))
 			}
 			return replacement // Don't add "undefined" here because the result isn't used
 		}
 
 		// Inline non-mutated identity functions at print time
-		if (symbolFlags&(ast.IsIdentityFunction|ast.CouldPotentiallyBeMutated)) == ast.IsIdentityFunction && len(e.Args) == 1 {
+		if (symbolFlags&(js_ast.IsIdentityFunction|js_ast.CouldPotentiallyBeMutated)) == js_ast.IsIdentityFunction && len(e.Args) == 1 {
 			arg := e.Args[0]
 			if _, ok := arg.Data.(*js_ast.ESpread); !ok {
-				return p.astHelpers.SimplifyUnusedExpr(p.simplifyUnusedExpr(arg), p.options.UnsupportedFeatures)
+				return js_ast.SimplifyUnusedExpr(p.simplifyUnusedExpr(arg), p.options.UnsupportedFeatures, p.isUnbound)
 			}
 		}
 	}
@@ -1751,25 +1649,32 @@ func (p *printer) guardAgainstBehaviorChangeDueToSubstitution(expr js_ast.Expr, 
 func (p *printer) lateConstantFoldUnaryOrBinaryExpr(expr js_ast.Expr) js_ast.Expr {
 	switch e := expr.Data.(type) {
 	case *js_ast.EImportIdentifier:
-		ref := ast.FollowSymbols(p.symbols, e.Ref)
+		ref := js_ast.FollowSymbols(p.symbols, e.Ref)
 		if value := p.options.ConstValues[ref]; value.Kind != js_ast.ConstValueNone {
 			return js_ast.ConstValueToExpr(expr.Loc, value)
 		}
 
 	case *js_ast.EDot:
-		if value, ok := p.tryToGetImportedEnumValue(e.Target, e.Name); ok && value.String == nil {
-			value := js_ast.Expr{Loc: expr.Loc, Data: &js_ast.ENumber{Value: value.Number}}
+		if id, ok := e.Target.Data.(*js_ast.EImportIdentifier); ok {
+			ref := js_ast.FollowSymbols(p.symbols, id.Ref)
+			if symbol := p.symbols.Get(ref); symbol.Kind == js_ast.SymbolTSEnum {
+				if enum, ok := p.options.TSEnums[ref]; ok {
+					if value, ok := enum[e.Name]; ok && value.String == nil {
+						value := js_ast.Expr{Loc: expr.Loc, Data: &js_ast.ENumber{Value: value.Number}}
 
-			if strings.Contains(e.Name, "*/") {
-				// Don't wrap with a comment
-				return value
+						if strings.Contains(e.Name, "*/") {
+							// Don't wrap with a comment
+							return value
+						}
+
+						// Wrap with a comment
+						return js_ast.Expr{Loc: value.Loc, Data: &js_ast.EInlinedEnum{
+							Value:   value,
+							Comment: e.Name,
+						}}
+					}
+				}
 			}
-
-			// Wrap with a comment
-			return js_ast.Expr{Loc: value.Loc, Data: &js_ast.EInlinedEnum{
-				Value:   value,
-				Comment: e.Name,
-			}}
 		}
 
 	case *js_ast.EUnary:
@@ -1820,7 +1725,7 @@ func (p *printer) lateConstantFoldUnaryOrBinaryExpr(expr js_ast.Expr) js_ast.Exp
 
 func (p *printer) isUnboundIdentifier(expr js_ast.Expr) bool {
 	id, ok := expr.Data.(*js_ast.EIdentifier)
-	return ok && p.symbols.Get(ast.FollowSymbols(p.symbols, id.Ref)).Kind == ast.SymbolUnbound
+	return ok && p.symbols.Get(js_ast.FollowSymbols(p.symbols, id.Ref)).Kind == js_ast.SymbolUnbound
 }
 
 func (p *printer) isIdentifierOrNumericConstantOrPropertyAccess(expr js_ast.Expr) bool {
@@ -2026,7 +1931,7 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		p.addSourceMapping(expr.Loc)
 		p.print("import.meta")
 
-	case *js_ast.ENameOfSymbol:
+	case *js_ast.EMangledProp:
 		name := p.mangledPropName(e.Ref)
 		p.addSourceMappingForName(expr.Loc, name, e.Ref)
 
@@ -2034,7 +1939,7 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			p.print("/* @__KEY__ */ ")
 		}
 
-		p.printQuotedUTF8(name, printQuotedAllowBacktick)
+		p.printQuotedUTF8(name, true)
 
 	case *js_ast.EJSXElement:
 		// Start the opening tag
@@ -2076,7 +1981,7 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			}
 
 			p.printSpaceBeforeIdentifier()
-			if mangled, ok := property.Key.Data.(*js_ast.ENameOfSymbol); ok {
+			if mangled, ok := property.Key.Data.(*js_ast.EMangledProp); ok {
 				name := p.mangledPropName(mangled.Ref)
 				p.addSourceMappingForName(property.Key.Loc, name, mangled.Ref)
 				p.printIdentifier(name)
@@ -2098,26 +2003,24 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 
 			isMultiLine := p.willPrintExprCommentsAtLoc(property.ValueOrNil.Loc)
 
-			if property.Flags.Has(js_ast.PropertyWasShorthand) {
+			// Don't use shorthand syntax if it would discard comments
+			if !isMultiLine {
+				// Special-case string values
+				if str, ok := property.ValueOrNil.Data.(*js_ast.EString); ok {
+					if quote, ok := p.canPrintTextAsJSXAttribute(str.Value); ok {
+						p.print("=")
+						p.addSourceMapping(property.ValueOrNil.Loc)
+						p.print(quote)
+						p.print(helpers.UTF16ToString(str.Value))
+						p.print(quote)
+						continue
+					}
+				}
+
 				// Implicit "true" value
-				if boolean, ok := property.ValueOrNil.Data.(*js_ast.EBoolean); ok && boolean.Value {
+				if boolean, ok := property.ValueOrNil.Data.(*js_ast.EBoolean); ok && boolean.Value && property.Flags.Has(js_ast.PropertyWasShorthand) {
 					continue
 				}
-
-				// JSX element as JSX attribute value
-				if _, ok := property.ValueOrNil.Data.(*js_ast.EJSXElement); ok {
-					p.print("=")
-					p.printExpr(property.ValueOrNil, js_ast.LLowest, 0)
-					continue
-				}
-			}
-
-			// Special-case raw text
-			if text, ok := property.ValueOrNil.Data.(*js_ast.EJSXText); ok {
-				p.print("=")
-				p.addSourceMapping(property.ValueOrNil.Loc)
-				p.print(text.Raw)
-				continue
 			}
 
 			// Generic JS value
@@ -2154,13 +2057,30 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		}
 		p.print(">")
 
+		isSingleLine := true
+		if !p.options.MinifyWhitespace {
+			isSingleLine = len(e.NullableChildren) < 2
+			if len(e.NullableChildren) == 1 {
+				if _, ok := e.NullableChildren[0].Data.(*js_ast.EJSXElement); !ok {
+					isSingleLine = true
+				}
+			}
+		}
+		if !isSingleLine {
+			p.options.Indent++
+		}
+
 		// Print the children
 		for _, childOrNil := range e.NullableChildren {
+			if !isSingleLine {
+				p.printNewline()
+				p.printIndent()
+			}
 			if _, ok := childOrNil.Data.(*js_ast.EJSXElement); ok {
 				p.printExpr(childOrNil, js_ast.LLowest, 0)
-			} else if text, ok := childOrNil.Data.(*js_ast.EJSXText); ok {
+			} else if str, ok := childOrNil.Data.(*js_ast.EString); ok && isSingleLine && p.canPrintTextAsJSXChild(str.Value) {
 				p.addSourceMapping(childOrNil.Loc)
-				p.print(text.Raw)
+				p.print(helpers.UTF16ToString(str.Value))
 			} else if childOrNil.Data != nil {
 				isMultiLine := p.willPrintExprCommentsAtLoc(childOrNil.Loc)
 				p.print("{")
@@ -2191,6 +2111,11 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		}
 
 		// Print the closing tag
+		if !isSingleLine {
+			p.options.Indent--
+			p.printNewline()
+			p.printIndent()
+		}
 		p.addSourceMapping(e.CloseLoc)
 		p.print("</")
 		p.printJSXTag(e.TagOrNil)
@@ -2230,18 +2155,17 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 				p.options.Indent++
 			}
 			for i, arg := range e.Args {
-				if i != 0 {
-					p.print(",")
-				}
-				if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-					if isMultiLine {
-						if needsNewline {
-							p.printNewline()
-						}
-						p.printIndent()
-					} else if i != 0 {
-						p.printSpace()
+				if isMultiLine {
+					if i != 0 {
+						p.print(",")
 					}
+					if needsNewline {
+						p.printNewline()
+					}
+					p.printIndent()
+				} else if i != 0 {
+					p.print(",")
+					p.printSpace()
 				}
 				p.printExpr(arg, js_ast.LComma, 0)
 				needsNewline = true
@@ -2266,23 +2190,23 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 
 	case *js_ast.ECall:
 		if p.options.MinifySyntax {
-			var symbolFlags ast.SymbolFlags
+			var symbolFlags js_ast.SymbolFlags
 			switch target := e.Target.Data.(type) {
 			case *js_ast.EIdentifier:
 				symbolFlags = p.symbols.Get(target.Ref).Flags
 			case *js_ast.EImportIdentifier:
-				ref := ast.FollowSymbols(p.symbols, target.Ref)
+				ref := js_ast.FollowSymbols(p.symbols, target.Ref)
 				symbolFlags = p.symbols.Get(ref).Flags
 			}
 
 			// Replace non-mutated empty functions with their arguments at print time
-			if (symbolFlags & (ast.IsEmptyFunction | ast.CouldPotentiallyBeMutated)) == ast.IsEmptyFunction {
+			if (symbolFlags & (js_ast.IsEmptyFunction | js_ast.CouldPotentiallyBeMutated)) == js_ast.IsEmptyFunction {
 				var replacement js_ast.Expr
 				for _, arg := range e.Args {
 					if _, ok := arg.Data.(*js_ast.ESpread); ok {
 						arg.Data = &js_ast.EArray{Items: []js_ast.Expr{arg}, IsSingleLine: true}
 					}
-					replacement = js_ast.JoinWithComma(replacement, p.astHelpers.SimplifyUnusedExpr(arg, p.options.UnsupportedFeatures))
+					replacement = js_ast.JoinWithComma(replacement, js_ast.SimplifyUnusedExpr(arg, p.options.UnsupportedFeatures, p.isUnbound))
 				}
 				if replacement.Data == nil || (flags&exprResultIsUnused) == 0 {
 					replacement = js_ast.JoinWithComma(replacement, js_ast.Expr{Loc: expr.Loc, Data: js_ast.EUndefinedShared})
@@ -2292,44 +2216,14 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			}
 
 			// Inline non-mutated identity functions at print time
-			if (symbolFlags&(ast.IsIdentityFunction|ast.CouldPotentiallyBeMutated)) == ast.IsIdentityFunction && len(e.Args) == 1 {
+			if (symbolFlags&(js_ast.IsIdentityFunction|js_ast.CouldPotentiallyBeMutated)) == js_ast.IsIdentityFunction && len(e.Args) == 1 {
 				arg := e.Args[0]
 				if _, ok := arg.Data.(*js_ast.ESpread); !ok {
 					if (flags & exprResultIsUnused) != 0 {
-						arg = p.astHelpers.SimplifyUnusedExpr(arg, p.options.UnsupportedFeatures)
+						arg = js_ast.SimplifyUnusedExpr(arg, p.options.UnsupportedFeatures, p.isUnbound)
 					}
 					p.printExpr(p.guardAgainstBehaviorChangeDueToSubstitution(arg, flags), level, flags)
 					break
-				}
-			}
-
-			// Inline IIFEs that return expressions at print time
-			if len(e.Args) == 0 {
-				// Note: Do not inline async arrow functions as they are not IIFEs. In
-				// particular, they are not necessarily invoked immediately, and any
-				// exceptions involved in their evaluation will be swallowed without
-				// bubbling up to the surrounding context.
-				if arrow, ok := e.Target.Data.(*js_ast.EArrow); ok && len(arrow.Args) == 0 && !arrow.IsAsync {
-					stmts := arrow.Body.Block.Stmts
-
-					// "(() => {})()" => "void 0"
-					if len(stmts) == 0 {
-						value := js_ast.Expr{Loc: expr.Loc, Data: js_ast.EUndefinedShared}
-						p.printExpr(p.guardAgainstBehaviorChangeDueToSubstitution(value, flags), level, flags)
-						break
-					}
-
-					// "(() => 123)()" => "123"
-					if len(stmts) == 1 {
-						if stmt, ok := stmts[0].Data.(*js_ast.SReturn); ok {
-							value := stmt.ValueOrNil
-							if value.Data == nil {
-								value.Data = js_ast.EUndefinedShared
-							}
-							p.printExpr(p.guardAgainstBehaviorChangeDueToSubstitution(value, flags), level, flags)
-							break
-						}
-					}
 				}
 			}
 		}
@@ -2382,16 +2276,15 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			p.options.Indent++
 		}
 		for i, arg := range e.Args {
-			if i != 0 {
-				p.print(",")
-			}
-			if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-				if isMultiLine {
-					p.printNewline()
-					p.printIndent()
-				} else if i != 0 {
-					p.printSpace()
+			if isMultiLine {
+				if i != 0 {
+					p.print(",")
 				}
+				p.printNewline()
+				p.printIndent()
+			} else if i != 0 {
+				p.print(",")
+				p.printSpace()
 			}
 			p.printExpr(arg, js_ast.LComma, 0)
 		}
@@ -2450,11 +2343,11 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		p.printRequireOrImportExpr(e.ImportRecordIndex, level, flags, e.CloseParenLoc)
 
 	case *js_ast.EImportCall:
-		// Only print the second argument if either import assertions or import attributes are supported
-		printImportAssertOrWith := e.OptionsOrNil.Data != nil && (!p.options.UnsupportedFeatures.Has(compat.ImportAssertions) || !p.options.UnsupportedFeatures.Has(compat.ImportAttributes))
+		// Just omit import assertions if they aren't supported
+		printImportAssertions := e.OptionsOrNil.Data != nil && !p.options.UnsupportedFeatures.Has(compat.ImportAssertions)
 		isMultiLine := !p.options.MinifyWhitespace &&
 			(p.willPrintExprCommentsAtLoc(e.Expr.Loc) ||
-				(printImportAssertOrWith && p.willPrintExprCommentsAtLoc(e.OptionsOrNil.Loc)) ||
+				(printImportAssertions && p.willPrintExprCommentsAtLoc(e.OptionsOrNil.Loc)) ||
 				p.willPrintExprCommentsAtLoc(e.CloseParenLoc))
 		wrap := level >= js_ast.LNew || (flags&forbidCall) != 0
 		if wrap {
@@ -2470,7 +2363,7 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		}
 		p.printExpr(e.Expr, js_ast.LComma, 0)
 
-		if printImportAssertOrWith {
+		if printImportAssertions {
 			p.print(",")
 			if isMultiLine {
 				p.printNewline()
@@ -2498,18 +2391,25 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			flags |= hasNonOptionalChainParent
 
 			// Inline cross-module TypeScript enum references here
-			if value, ok := p.tryToGetImportedEnumValue(e.Target, e.Name); ok {
-				if value.String != nil {
-					p.printQuotedUTF16(value.String, printQuotedAllowBacktick)
-				} else {
-					p.printNumber(value.Number, level)
+			if id, ok := e.Target.Data.(*js_ast.EImportIdentifier); ok {
+				ref := js_ast.FollowSymbols(p.symbols, id.Ref)
+				if symbol := p.symbols.Get(ref); symbol.Kind == js_ast.SymbolTSEnum {
+					if enum, ok := p.options.TSEnums[ref]; ok {
+						if value, ok := enum[e.Name]; ok {
+							if value.String != nil {
+								p.printQuotedUTF16(value.String, true /* allowBacktick */)
+							} else {
+								p.printNumber(value.Number, level)
+							}
+							if !p.options.MinifyWhitespace && !p.options.MinifyIdentifiers && !strings.Contains(e.Name, "*/") {
+								p.print(" /* ")
+								p.print(e.Name)
+								p.print(" */")
+							}
+							break
+						}
+					}
 				}
-				if !p.options.MinifyWhitespace && !p.options.MinifyIdentifiers && !strings.Contains(e.Name, "*/") {
-					p.print(" /* ")
-					p.print(e.Name)
-					p.print(" */")
-				}
-				break
 			}
 		} else {
 			if (flags & hasNonOptionalChainParent) != 0 {
@@ -2529,9 +2429,6 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			} else {
 				p.print(".")
 			}
-			if p.options.LineLimit > 0 {
-				p.printNewlinePastLineLimit()
-			}
 			p.addSourceMapping(e.NameLoc)
 			p.printIdentifier(e.Name)
 		} else {
@@ -2540,7 +2437,7 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			}
 			p.print("[")
 			p.addSourceMapping(e.NameLoc)
-			p.printQuotedUTF8(e.Name, printQuotedAllowBacktick)
+			p.printQuotedUTF8(e.Name, true /* allowBacktick */)
 			p.print("]")
 		}
 		if wrap {
@@ -2548,29 +2445,38 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		}
 
 	case *js_ast.EIndex:
+		wrap := false
 		if e.OptionalChain == js_ast.OptionalChainNone {
 			flags |= hasNonOptionalChainParent
 
 			// Inline cross-module TypeScript enum references here
 			if index, ok := e.Index.Data.(*js_ast.EString); ok {
-				if value, name, ok := p.tryToGetImportedEnumValueUTF16(e.Target, index.Value); ok {
-					if value.String != nil {
-						p.printQuotedUTF16(value.String, printQuotedAllowBacktick)
-					} else {
-						p.printNumber(value.Number, level)
+				if id, ok := e.Target.Data.(*js_ast.EImportIdentifier); ok {
+					ref := js_ast.FollowSymbols(p.symbols, id.Ref)
+					if symbol := p.symbols.Get(ref); symbol.Kind == js_ast.SymbolTSEnum {
+						if enum, ok := p.options.TSEnums[ref]; ok {
+							name := helpers.UTF16ToString(index.Value)
+							if value, ok := enum[name]; ok {
+								if value.String != nil {
+									p.printQuotedUTF16(value.String, true /* allowBacktick */)
+								} else {
+									p.printNumber(value.Number, level)
+								}
+								if !p.options.MinifyWhitespace && !p.options.MinifyIdentifiers && !strings.Contains(name, "*/") {
+									p.print(" /* ")
+									p.print(name)
+									p.print(" */")
+								}
+								break
+							}
+						}
 					}
-					if !p.options.MinifyWhitespace && !p.options.MinifyIdentifiers && !strings.Contains(name, "*/") {
-						p.print(" /* ")
-						p.print(name)
-						p.print(" */")
-					}
-					break
 				}
 			}
 		} else {
 			if (flags & hasNonOptionalChainParent) != 0 {
+				wrap = true
 				p.print("(")
-				defer p.print(")")
 			}
 			flags &= ^hasNonOptionalChainParent
 		}
@@ -2587,61 +2493,61 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			name := p.renamer.NameForSymbol(index.Ref)
 			p.addSourceMappingForName(e.Index.Loc, name, index.Ref)
 			p.printIdentifier(name)
-			return
 
-		case *js_ast.ENameOfSymbol:
+		case *js_ast.EMangledProp:
 			if name := p.mangledPropName(index.Ref); p.canPrintIdentifier(name) {
 				if e.OptionalChain != js_ast.OptionalChainStart {
 					p.print(".")
 				}
 				p.addSourceMappingForName(e.Index.Loc, name, index.Ref)
 				p.printIdentifier(name)
-				return
-			}
-
-		case *js_ast.EInlinedEnum:
-			if p.options.MinifySyntax {
-				if str, ok := index.Value.Data.(*js_ast.EString); ok && p.canPrintIdentifierUTF16(str.Value) {
-					if e.OptionalChain != js_ast.OptionalChainStart {
-						p.print(".")
-					}
-					p.addSourceMapping(index.Value.Loc)
-					p.printIdentifierUTF16(str.Value)
-					return
+			} else {
+				isMultiLine := p.willPrintExprCommentsAtLoc(e.Index.Loc) || p.willPrintExprCommentsAtLoc(e.CloseBracketLoc)
+				p.print("[")
+				if isMultiLine {
+					p.printNewline()
+					p.options.Indent++
+					p.printIndent()
 				}
-			}
-
-		case *js_ast.EDot:
-			if p.options.MinifySyntax {
-				if value, ok := p.tryToGetImportedEnumValue(index.Target, index.Name); ok && value.String != nil && p.canPrintIdentifierUTF16(value.String) {
-					if e.OptionalChain != js_ast.OptionalChainStart {
-						p.print(".")
-					}
-					p.addSourceMapping(e.Index.Loc)
-					p.printIdentifierUTF16(value.String)
-					return
+				p.printExprCommentsAtLoc(e.Index.Loc)
+				p.addSourceMapping(e.Index.Loc)
+				p.printQuotedUTF8(name, true /* allowBacktick */)
+				if isMultiLine {
+					p.printNewline()
+					p.printExprCommentsAfterCloseTokenAtLoc(e.CloseBracketLoc)
+					p.options.Indent--
+					p.printIndent()
 				}
+				if e.CloseBracketLoc.Start > expr.Loc.Start {
+					p.addSourceMapping(e.CloseBracketLoc)
+				}
+				p.print("]")
 			}
+
+		default:
+			isMultiLine := p.willPrintExprCommentsAtLoc(e.Index.Loc) || p.willPrintExprCommentsAtLoc(e.CloseBracketLoc)
+			p.print("[")
+			if isMultiLine {
+				p.printNewline()
+				p.options.Indent++
+				p.printIndent()
+			}
+			p.printExpr(e.Index, js_ast.LLowest, 0)
+			if isMultiLine {
+				p.printNewline()
+				p.printExprCommentsAfterCloseTokenAtLoc(e.CloseBracketLoc)
+				p.options.Indent--
+				p.printIndent()
+			}
+			if e.CloseBracketLoc.Start > expr.Loc.Start {
+				p.addSourceMapping(e.CloseBracketLoc)
+			}
+			p.print("]")
 		}
 
-		isMultiLine := p.willPrintExprCommentsAtLoc(e.Index.Loc) || p.willPrintExprCommentsAtLoc(e.CloseBracketLoc)
-		p.print("[")
-		if isMultiLine {
-			p.printNewline()
-			p.options.Indent++
-			p.printIndent()
+		if wrap {
+			p.print(")")
 		}
-		p.printExpr(e.Index, js_ast.LLowest, 0)
-		if isMultiLine {
-			p.printNewline()
-			p.printExprCommentsAfterCloseTokenAtLoc(e.CloseBracketLoc)
-			p.options.Indent--
-			p.printIndent()
-		}
-		if e.CloseBracketLoc.Start > expr.Loc.Start {
-			p.addSourceMapping(e.CloseBracketLoc)
-		}
-		p.print("]")
 
 	case *js_ast.EIf:
 		wrap := level >= js_ast.LConditional
@@ -2652,15 +2558,11 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		p.printExpr(e.Test, js_ast.LConditional, flags&forbidIn)
 		p.printSpace()
 		p.print("?")
-		if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-			p.printSpace()
-		}
+		p.printSpace()
 		p.printExprWithoutLeadingNewline(e.Yes, js_ast.LYield, 0)
 		p.printSpace()
 		p.print(":")
-		if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-			p.printSpace()
-		}
+		p.printSpace()
 		p.printExprWithoutLeadingNewline(e.No, js_ast.LYield, flags&forbidIn)
 		if wrap {
 			p.print(")")
@@ -2745,7 +2647,7 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		if wrap {
 			p.print("(")
 		}
-		p.printDecorators(e.Class.Decorators, printSpaceAfterDecorator)
+		p.printDecorators(e.Class.Decorators, printDecoratorsAllOnOneLine)
 		p.printSpaceBeforeIdentifier()
 		p.addSourceMapping(expr.Loc)
 		p.print("class")
@@ -2772,14 +2674,13 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			for i, item := range e.Items {
 				if i != 0 {
 					p.print(",")
-				}
-				if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-					if isMultiLine {
-						p.printNewline()
-						p.printIndent()
-					} else if i != 0 {
+					if !isMultiLine {
 						p.printSpace()
 					}
+				}
+				if isMultiLine {
+					p.printNewline()
+					p.printIndent()
 				}
 				p.printExpr(item, js_ast.LComma, 0)
 
@@ -2828,13 +2729,11 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 				if i != 0 {
 					p.print(",")
 				}
-				if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-					if isMultiLine {
-						p.printNewline()
-						p.printIndent()
-					} else {
-						p.printSpace()
-					}
+				if isMultiLine {
+					p.printNewline()
+					p.printIndent()
+				} else {
+					p.printSpace()
 				}
 				p.printProperty(item)
 			}
@@ -2882,10 +2781,6 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		}
 
 	case *js_ast.EString:
-		var flags printQuotedFlags
-		if e.ContainsUniqueKey {
-			flags = printQuotedNoWrap
-		}
 		p.addSourceMapping(expr.Loc)
 
 		if !p.options.MinifyWhitespace && e.HasPropertyKeyComment {
@@ -2895,48 +2790,34 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		// If this was originally a template literal, print it as one as long as we're not minifying
 		if e.PreferTemplate && !p.options.MinifySyntax && !p.options.UnsupportedFeatures.Has(compat.TemplateLiteral) {
 			p.print("`")
-			p.printUnquotedUTF16(e.Value, '`', flags)
+			p.printUnquotedUTF16(e.Value, '`')
 			p.print("`")
 			return
 		}
 
-		p.printQuotedUTF16(e.Value, flags|printQuotedAllowBacktick)
+		p.printQuotedUTF16(e.Value, true /* allowBacktick */)
 
 	case *js_ast.ETemplate:
-		if e.TagOrNil.Data == nil && (p.options.MinifySyntax || p.wasLazyExport) {
-			// Inline enums and mangled properties when minifying
+		if p.options.MinifySyntax && e.TagOrNil.Data == nil {
+			// Inline mangled properties when minifying
 			var replaced []js_ast.TemplatePart
 			for i, part := range e.Parts {
-				var inlinedValue js_ast.E
-				switch e2 := part.Value.Data.(type) {
-				case *js_ast.ENameOfSymbol:
-					inlinedValue = &js_ast.EString{Value: helpers.StringToUTF16(p.mangledPropName(e2.Ref))}
-				case *js_ast.EDot:
-					if value, ok := p.tryToGetImportedEnumValue(e2.Target, e2.Name); ok {
-						if value.String != nil {
-							inlinedValue = &js_ast.EString{Value: value.String}
-						} else {
-							inlinedValue = &js_ast.ENumber{Value: value.Number}
-						}
-					}
-				}
-				if inlinedValue != nil {
+				if mangled, ok := part.Value.Data.(*js_ast.EMangledProp); ok {
 					if replaced == nil {
-						replaced = make([]js_ast.TemplatePart, 0, len(e.Parts))
-						replaced = append(replaced, e.Parts[:i]...)
+						replaced = make([]js_ast.TemplatePart, len(e.Parts))
 					}
-					part.Value.Data = inlinedValue
-					replaced = append(replaced, part)
+					part.Value.Data = &js_ast.EString{Value: helpers.StringToUTF16(p.mangledPropName(mangled.Ref))}
+					replaced[i] = part
 				} else if replaced != nil {
-					replaced = append(replaced, part)
+					replaced[i] = part
 				}
 			}
 			if replaced != nil {
 				copy := *e
 				copy.Parts = replaced
-				switch e2 := js_ast.InlinePrimitivesIntoTemplate(logger.Loc{}, &copy).Data.(type) {
+				switch e2 := js_ast.InlineStringsAndNumbersIntoTemplate(logger.Loc{}, &copy).Data.(type) {
 				case *js_ast.EString:
-					p.printQuotedUTF16(e2.Value, printQuotedAllowBacktick)
+					p.printQuotedUTF16(e2.Value, true /* allowBacktick */)
 					return
 				case *js_ast.ETemplate:
 					e = e2
@@ -2946,7 +2827,7 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			// Convert no-substitution template literals into strings if it's smaller
 			if len(e.Parts) == 0 {
 				p.addSourceMapping(expr.Loc)
-				p.printQuotedUTF16(e.HeadCooked, printQuotedAllowBacktick)
+				p.printQuotedUTF16(e.HeadCooked, true /* allowBacktick */)
 				return
 			}
 		}
@@ -2978,17 +2859,16 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 		if e.TagOrNil.Data != nil {
 			p.print(e.HeadRaw)
 		} else {
-			p.printUnquotedUTF16(e.HeadCooked, '`', 0)
+			p.printUnquotedUTF16(e.HeadCooked, '`')
 		}
 		for _, part := range e.Parts {
 			p.print("${")
 			p.printExpr(part.Value, js_ast.LLowest, 0)
-			p.addSourceMapping(part.TailLoc)
 			p.print("}")
 			if e.TagOrNil.Data != nil {
 				p.print(part.TailRaw)
 			} else {
-				p.printUnquotedUTF16(part.TailCooked, '`', 0)
+				p.printUnquotedUTF16(part.TailCooked, '`')
 			}
 		}
 		p.print("`")
@@ -3048,16 +2928,19 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 
 	case *js_ast.EImportIdentifier:
 		// Potentially use a property access instead of an identifier
-		ref := ast.FollowSymbols(p.symbols, e.Ref)
+		ref := js_ast.FollowSymbols(p.symbols, e.Ref)
 		symbol := p.symbols.Get(ref)
 
-		if symbol.ImportItemStatus == ast.ImportItemMissing {
+		if symbol.ImportItemStatus == js_ast.ImportItemMissing {
 			p.printUndefined(expr.Loc, level)
 		} else if symbol.NamespaceAlias != nil {
 			wrap := p.callTarget == e && e.WasOriginallyIdentifier
 			if wrap {
-				p.print("(0,")
-				p.printSpace()
+				if p.options.MinifyWhitespace {
+					p.print("(0,")
+				} else {
+					p.print("(0, ")
+				}
 			}
 			p.printSpaceBeforeIdentifier()
 			p.addSourceMapping(expr.Loc)
@@ -3070,7 +2953,7 @@ func (p *printer) printExpr(expr js_ast.Expr, level js_ast.L, flags printExprFla
 			} else {
 				p.print("[")
 				p.addSourceMappingForName(expr.Loc, alias, ref)
-				p.printQuotedUTF8(alias, printQuotedAllowBacktick)
+				p.printQuotedUTF8(alias, true /* allowBacktick */)
 				p.print("]")
 			}
 			if wrap {
@@ -3370,9 +3253,7 @@ func (v *binaryExprVisitor) visitRightAndFinish(p *printer) {
 		p.prevOpEnd = len(p.js)
 	}
 
-	if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-		p.printSpace()
-	}
+	p.printSpace()
 
 	if e.Op == js_ast.BinOpComma {
 		// The result of the right operand of the comma operator is unused if the caller doesn't use it
@@ -3389,8 +3270,8 @@ func (v *binaryExprVisitor) visitRightAndFinish(p *printer) {
 func (p *printer) isUnboundEvalIdentifier(value js_ast.Expr) bool {
 	if id, ok := value.Data.(*js_ast.EIdentifier); ok {
 		// Using the original name here is ok since unbound symbols are not renamed
-		symbol := p.symbols.Get(ast.FollowSymbols(p.symbols, id.Ref))
-		return symbol.Kind == ast.SymbolUnbound && symbol.OriginalName == "eval"
+		symbol := p.symbols.Get(js_ast.FollowSymbols(p.symbols, id.Ref))
+		return symbol.Kind == js_ast.SymbolUnbound && symbol.OriginalName == "eval"
 	}
 	return false
 }
@@ -3600,8 +3481,6 @@ func (p *printer) printForLoopInit(init js_ast.Stmt, flags printExprFlags) {
 		p.printExpr(s.Value, js_ast.LLowest, flags|exprResultIsUnused)
 	case *js_ast.SLocal:
 		switch s.Kind {
-		case js_ast.LocalAwaitUsing:
-			p.printDecls("await using", s.Decls, flags)
 		case js_ast.LocalConst:
 			p.printDecls("const", s.Decls, flags)
 		case js_ast.LocalLet:
@@ -3623,9 +3502,7 @@ func (p *printer) printDecls(keyword string, decls []js_ast.Decl, flags printExp
 	for i, decl := range decls {
 		if i != 0 {
 			p.print(",")
-			if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-				p.printSpace()
-			}
+			p.printSpace()
 		}
 		p.printBinding(decl.Binding)
 
@@ -3819,7 +3696,7 @@ func (p *printer) printIndentedComment(text string) {
 func (p *printer) printPath(importRecordIndex uint32, importKind ast.ImportKind) {
 	record := p.importRecords[importRecordIndex]
 	p.addSourceMapping(record.Range.Loc)
-	p.printQuotedUTF8(record.Path.Text, printQuotedNoWrap)
+	p.printQuotedUTF8(record.Path.Text, false /* allowBacktick */)
 
 	if p.options.NeedsMetafile {
 		external := ""
@@ -3832,36 +3709,33 @@ func (p *printer) printPath(importRecordIndex uint32, importKind ast.ImportKind)
 			external))
 	}
 
-	if record.AssertOrWith != nil && importKind == ast.ImportStmt {
-		feature := compat.ImportAttributes
-		if record.AssertOrWith.Keyword == ast.AssertKeyword {
-			feature = compat.ImportAssertions
-		}
-
-		// Omit import assertions/attributes on this import statement if they would cause a syntax error
-		if p.options.UnsupportedFeatures.Has(feature) {
-			return
-		}
-
-		p.printSpace()
-		p.addSourceMapping(record.AssertOrWith.KeywordLoc)
-		p.print(record.AssertOrWith.Keyword.String())
-		p.printSpace()
-		p.printImportAssertOrWithClause(*record.AssertOrWith)
-	}
-}
-
-func (p *printer) printImportCallAssertOrWith(assertOrWith *ast.ImportAssertOrWith, outerIsMultiLine bool) {
-	// Omit import assertions/attributes if we know the "import()" syntax doesn't
-	// support a second argument (i.e. both import assertions and import
-	// attributes aren't supported) and doing so would cause a syntax error
-	if assertOrWith == nil || (p.options.UnsupportedFeatures.Has(compat.ImportAssertions) && p.options.UnsupportedFeatures.Has(compat.ImportAttributes)) {
+	// Just omit import assertions if they aren't supported
+	if p.options.UnsupportedFeatures.Has(compat.ImportAssertions) {
 		return
 	}
 
-	isMultiLine := p.willPrintExprCommentsAtLoc(assertOrWith.KeywordLoc) ||
-		p.willPrintExprCommentsAtLoc(assertOrWith.InnerOpenBraceLoc) ||
-		p.willPrintExprCommentsAtLoc(assertOrWith.OuterCloseBraceLoc)
+	if record.Assertions != nil && importKind == ast.ImportStmt {
+		p.printSpace()
+		p.addSourceMapping(record.Assertions.AssertLoc)
+		p.print("assert")
+		p.printSpace()
+		p.printImportAssertionsClause(*record.Assertions)
+	}
+}
+
+func (p *printer) printImportCallAssertions(assertions *ast.ImportAssertions, outerIsMultiLine bool) {
+	// Just omit import assertions if they aren't supported
+	if p.options.UnsupportedFeatures.Has(compat.ImportAssertions) {
+		return
+	}
+
+	if assertions == nil {
+		return
+	}
+
+	isMultiLine := p.willPrintExprCommentsAtLoc(assertions.AssertLoc) ||
+		p.willPrintExprCommentsAtLoc(assertions.InnerOpenBraceLoc) ||
+		p.willPrintExprCommentsAtLoc(assertions.OuterCloseBraceLoc)
 
 	p.print(",")
 	if outerIsMultiLine {
@@ -3870,8 +3744,8 @@ func (p *printer) printImportCallAssertOrWith(assertOrWith *ast.ImportAssertOrWi
 	} else {
 		p.printSpace()
 	}
-	p.printExprCommentsAtLoc(assertOrWith.OuterOpenBraceLoc)
-	p.addSourceMapping(assertOrWith.OuterOpenBraceLoc)
+	p.printExprCommentsAtLoc(assertions.OuterOpenBraceLoc)
+	p.addSourceMapping(assertions.OuterOpenBraceLoc)
 	p.print("{")
 
 	if isMultiLine {
@@ -3882,40 +3756,39 @@ func (p *printer) printImportCallAssertOrWith(assertOrWith *ast.ImportAssertOrWi
 		p.printSpace()
 	}
 
-	p.printExprCommentsAtLoc(assertOrWith.KeywordLoc)
-	p.addSourceMapping(assertOrWith.KeywordLoc)
-	p.print(assertOrWith.Keyword.String())
-	p.print(":")
+	p.printExprCommentsAtLoc(assertions.AssertLoc)
+	p.addSourceMapping(assertions.AssertLoc)
+	p.print("assert:")
 
-	if p.willPrintExprCommentsAtLoc(assertOrWith.InnerOpenBraceLoc) {
+	if p.willPrintExprCommentsAtLoc(assertions.InnerOpenBraceLoc) {
 		p.printNewline()
 		p.options.Indent++
 		p.printIndent()
-		p.printExprCommentsAtLoc(assertOrWith.InnerOpenBraceLoc)
-		p.printImportAssertOrWithClause(*assertOrWith)
+		p.printExprCommentsAtLoc(assertions.InnerOpenBraceLoc)
+		p.printImportAssertionsClause(*assertions)
 		p.options.Indent--
 	} else {
 		p.printSpace()
-		p.printImportAssertOrWithClause(*assertOrWith)
+		p.printImportAssertionsClause(*assertions)
 	}
 
 	if isMultiLine {
 		p.printNewline()
-		p.printExprCommentsAfterCloseTokenAtLoc(assertOrWith.OuterCloseBraceLoc)
+		p.printExprCommentsAfterCloseTokenAtLoc(assertions.OuterCloseBraceLoc)
 		p.options.Indent--
 		p.printIndent()
 	} else {
 		p.printSpace()
 	}
 
-	p.addSourceMapping(assertOrWith.OuterCloseBraceLoc)
+	p.addSourceMapping(assertions.OuterCloseBraceLoc)
 	p.print("}")
 }
 
-func (p *printer) printImportAssertOrWithClause(assertOrWith ast.ImportAssertOrWith) {
-	isMultiLine := p.willPrintExprCommentsAtLoc(assertOrWith.InnerCloseBraceLoc)
+func (p *printer) printImportAssertionsClause(assertions ast.ImportAssertions) {
+	isMultiLine := p.willPrintExprCommentsAtLoc(assertions.InnerCloseBraceLoc)
 	if !isMultiLine {
-		for _, entry := range assertOrWith.Entries {
+		for _, entry := range assertions.Entries {
 			if p.willPrintExprCommentsAtLoc(entry.KeyLoc) || p.willPrintExprCommentsAtLoc(entry.ValueLoc) {
 				isMultiLine = true
 				break
@@ -3923,13 +3796,13 @@ func (p *printer) printImportAssertOrWithClause(assertOrWith ast.ImportAssertOrW
 		}
 	}
 
-	p.addSourceMapping(assertOrWith.InnerOpenBraceLoc)
+	p.addSourceMapping(assertions.InnerOpenBraceLoc)
 	p.print("{")
 	if isMultiLine {
 		p.options.Indent++
 	}
 
-	for i, entry := range assertOrWith.Entries {
+	for i, entry := range assertions.Entries {
 		if i > 0 {
 			p.print(",")
 		}
@@ -3946,7 +3819,7 @@ func (p *printer) printImportAssertOrWithClause(assertOrWith ast.ImportAssertOrW
 			p.printSpaceBeforeIdentifier()
 			p.printIdentifierUTF16(entry.Key)
 		} else {
-			p.printQuotedUTF16(entry.Key, 0)
+			p.printQuotedUTF16(entry.Key, false /* allowBacktick */)
 		}
 
 		p.print(":")
@@ -3957,25 +3830,25 @@ func (p *printer) printImportAssertOrWithClause(assertOrWith ast.ImportAssertOrW
 			p.printIndent()
 			p.printExprCommentsAtLoc(entry.ValueLoc)
 			p.addSourceMapping(entry.ValueLoc)
-			p.printQuotedUTF16(entry.Value, 0)
+			p.printQuotedUTF16(entry.Value, false /* allowBacktick */)
 			p.options.Indent--
 		} else {
 			p.printSpace()
 			p.addSourceMapping(entry.ValueLoc)
-			p.printQuotedUTF16(entry.Value, 0)
+			p.printQuotedUTF16(entry.Value, false /* allowBacktick */)
 		}
 	}
 
 	if isMultiLine {
 		p.printNewline()
-		p.printExprCommentsAfterCloseTokenAtLoc(assertOrWith.InnerCloseBraceLoc)
+		p.printExprCommentsAfterCloseTokenAtLoc(assertions.InnerCloseBraceLoc)
 		p.options.Indent--
 		p.printIndent()
-	} else if len(assertOrWith.Entries) > 0 {
+	} else if len(assertions.Entries) > 0 {
 		p.printSpace()
 	}
 
-	p.addSourceMapping(assertOrWith.InnerCloseBraceLoc)
+	p.addSourceMapping(assertions.InnerCloseBraceLoc)
 	p.print("}")
 }
 
@@ -3986,10 +3859,6 @@ const (
 )
 
 func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
-	if p.options.LineLimit > 0 {
-		p.printNewlinePastLineLimit()
-	}
-
 	switch s := stmt.Data.(type) {
 	case *js_ast.SComment:
 		text := s.Text
@@ -4046,10 +3915,8 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 		p.printNewline()
 
 	case *js_ast.SClass:
-		omitIndent := p.printDecorators(s.Class.Decorators, printNewlineAfterDecorator)
-		if !omitIndent {
-			p.printIndent()
-		}
+		p.printDecorators(s.Class.Decorators, printDecoratorsOnSeparateLines)
+		p.printIndent()
 		p.printSpaceBeforeIdentifier()
 		p.addSourceMapping(stmt.Loc)
 		if s.IsExport {
@@ -4060,6 +3927,22 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 		p.addSourceMappingForName(s.Class.Name.Loc, name, s.Class.Name.Ref)
 		p.printIdentifier(name)
 		p.printClass(s.Class)
+		p.printNewline()
+
+	// dci
+	case *js_ast.SContext:
+		p.printIndent()
+		p.printSpaceBeforeIdentifier()
+		p.addSourceMapping(stmt.Loc)
+		if s.IsExport {
+			p.print("export ")
+		}
+		p.print("context ")
+		name := p.renamer.NameForSymbol(s.Context.Name.Ref)
+		p.addSourceMappingForName(s.Context.Name.Loc, name, s.Context.Name.Ref)
+		p.printIdentifier(name)
+		// TODO
+		// p.printContext(s.Context)
 		p.printNewline()
 
 	case *js_ast.SEmpty:
@@ -4075,14 +3958,11 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 				p.print("// @__NO_SIDE_EFFECTS__\n")
 			}
 		}
-		omitIndent := false
 		if s2, ok := s.Value.Data.(*js_ast.SClass); ok {
-			omitIndent = p.printDecorators(s2.Class.Decorators, printNewlineAfterDecorator)
+			p.printDecorators(s2.Class.Decorators, printDecoratorsOnSeparateLines)
 		}
 		p.addSourceMapping(stmt.Loc)
-		if !omitIndent {
-			p.printIndent()
-		}
+		p.printIndent()
 		p.printSpaceBeforeIdentifier()
 		p.print("export default")
 		p.printSpace()
@@ -4127,6 +4007,20 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 			p.printClass(s2.Class)
 			p.printNewline()
 
+		// dci
+		case *js_ast.SContext:
+			p.printSpaceBeforeIdentifier()
+			p.print("context")
+			if s2.Context.Name != nil {
+				p.print(" ")
+				name := p.renamer.NameForSymbol(s2.Context.Name.Ref)
+				p.addSourceMappingForName(s2.Context.Name.Loc, name, s2.Context.Name.Ref)
+				p.printIdentifier(name)
+			}
+			// TODO
+			// p.printContext(s2.Context)
+			p.printNewline()
+
 		default:
 			panic("Internal error")
 		}
@@ -4142,7 +4036,7 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 		if s.Alias != nil {
 			p.print("as")
 			p.printSpace()
-			p.printClauseAlias(s.Alias.Loc, s.Alias.OriginalName)
+			p.printClauseAlias(s.Alias.OriginalName)
 			p.printSpace()
 			p.printSpaceBeforeIdentifier()
 		}
@@ -4168,13 +4062,11 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 				p.print(",")
 			}
 
-			if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-				if s.IsSingleLine {
-					p.printSpace()
-				} else {
-					p.printNewline()
-					p.printIndent()
-				}
+			if s.IsSingleLine {
+				p.printSpace()
+			} else {
+				p.printNewline()
+				p.printIndent()
 			}
 
 			name := p.renamer.NameForSymbol(item.Name.Ref)
@@ -4183,7 +4075,8 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 			if name != item.Alias {
 				p.print(" as")
 				p.printSpace()
-				p.printClauseAlias(item.AliasLoc, item.Alias)
+				p.addSourceMapping(item.AliasLoc)
+				p.printClauseAlias(item.Alias)
 			}
 		}
 
@@ -4215,22 +4108,20 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 				p.print(",")
 			}
 
-			if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-				if s.IsSingleLine {
-					p.printSpace()
-				} else {
-					p.printNewline()
-					p.printIndent()
-				}
+			if s.IsSingleLine {
+				p.printSpace()
+			} else {
+				p.printNewline()
+				p.printIndent()
 			}
 
-			p.printClauseAlias(item.Name.Loc, item.OriginalName)
+			p.printClauseAlias(item.OriginalName)
 			if item.OriginalName != item.Alias {
 				p.printSpace()
 				p.printSpaceBeforeIdentifier()
 				p.print("as")
 				p.printSpace()
-				p.printClauseAlias(item.AliasLoc, item.Alias)
+				p.printClauseAlias(item.Alias)
 			}
 		}
 
@@ -4252,8 +4143,6 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 	case *js_ast.SLocal:
 		p.addSourceMapping(stmt.Loc)
 		switch s.Kind {
-		case js_ast.LocalAwaitUsing:
-			p.printDeclStmt(s.IsExport, "await using", s.Decls)
 		case js_ast.LocalConst:
 			p.printDeclStmt(s.IsExport, "const", s.Decls)
 		case js_ast.LocalLet:
@@ -4417,9 +4306,7 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 			p.printExpr(s.Value, js_ast.LLowest, 0)
 		}
 		p.print(")")
-		p.withNesting++
 		p.printBody(s.Body)
-		p.withNesting--
 
 	case *js_ast.SLabel:
 		// Avoid printing a source mapping that masks the one from the label
@@ -4453,7 +4340,7 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 				p.print(")")
 			}
 			p.printSpace()
-			p.printBlock(s.Catch.BlockLoc, s.Catch.Block)
+			p.printBlock(s.Catch.Loc, s.Catch.Block)
 		}
 
 		if s.Finally != nil {
@@ -4626,16 +4513,15 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 					p.print(",")
 				}
 
-				if p.options.LineLimit <= 0 || !p.printNewlinePastLineLimit() {
-					if s.IsSingleLine {
-						p.printSpace()
-					} else {
-						p.printNewline()
-						p.printIndent()
-					}
+				if s.IsSingleLine {
+					p.printSpace()
+				} else {
+					p.printNewline()
+					p.printIndent()
 				}
 
-				p.printClauseAlias(item.AliasLoc, item.Alias)
+				p.addSourceMapping(item.AliasLoc)
+				p.printClauseAlias(item.Alias)
 
 				name := p.renamer.NameForSymbol(item.Name.Ref)
 				if name != item.Alias {
@@ -4701,7 +4587,7 @@ func (p *printer) printStmt(stmt js_ast.Stmt, flags printStmtFlags) {
 		p.addSourceMapping(stmt.Loc)
 		p.printIndent()
 		p.printSpaceBeforeIdentifier()
-		p.printQuotedUTF16(s.Value, 0)
+		p.printQuotedUTF16(s.Value, false /* allowBacktick */)
 		p.printSemicolonAfterStatement()
 
 	case *js_ast.SBreak:
@@ -4791,13 +4677,13 @@ type Options struct {
 	RequireOrImportMetaForSource func(uint32) RequireOrImportMeta
 
 	// Cross-module inlining of TypeScript enums is actually done during printing
-	TSEnums map[ast.Ref]map[string]js_ast.TSEnumValue
+	TSEnums map[js_ast.Ref]map[string]js_ast.TSEnumValue
 
 	// Cross-module inlining of detected inlinable constants is also done during printing
-	ConstValues map[ast.Ref]js_ast.ConstValue
+	ConstValues map[js_ast.Ref]js_ast.ConstValue
 
 	// Property mangling results go here
-	MangledProps map[ast.Ref]string
+	MangledProps map[js_ast.Ref]string
 
 	// This will be present if the input file had a source map. In that case we
 	// want to map all the way back to the original input file(s).
@@ -4807,12 +4693,11 @@ type Options struct {
 	// us do binary search on to figure out what line a given AST node came from
 	LineOffsetTables []sourcemap.LineOffsetTable
 
-	ToCommonJSRef       ast.Ref
-	ToESMRef            ast.Ref
-	RuntimeRequireRef   ast.Ref
+	ToCommonJSRef       js_ast.Ref
+	ToESMRef            js_ast.Ref
+	RuntimeRequireRef   js_ast.Ref
 	UnsupportedFeatures compat.JSFeature
 	Indent              int
-	LineLimit           int
 	OutputFormat        config.Format
 	MinifyWhitespace    bool
 	MinifyIdentifiers   bool
@@ -4828,8 +4713,8 @@ type RequireOrImportMeta struct {
 	// CommonJS files will return the "require_*" wrapper function and an invalid
 	// exports object reference. Lazily-initialized ESM files will return the
 	// "init_*" wrapper function and the exports object for that file.
-	WrapperRef     ast.Ref
-	ExportsRef     ast.Ref
+	WrapperRef     js_ast.Ref
+	ExportsRef     js_ast.Ref
 	IsWrapperAsync bool
 }
 
@@ -4844,7 +4729,7 @@ type PrintResult struct {
 	SourceMapChunk sourcemap.Chunk
 }
 
-func Print(tree js_ast.AST, symbols ast.SymbolMap, r renamer.Renamer, options Options) PrintResult {
+func Print(tree js_ast.AST, symbols js_ast.SymbolMap, r renamer.Renamer, options Options) PrintResult {
 	p := &printer{
 		symbols:       symbols,
 		renamer:       r,
@@ -4852,7 +4737,6 @@ func Print(tree js_ast.AST, symbols ast.SymbolMap, r renamer.Renamer, options Op
 		options:       options,
 		moduleType:    tree.ModuleTypeData.Type,
 		exprComments:  tree.ExprComments,
-		wasLazyExport: tree.HasLazyExport,
 
 		stmtStart:          -1,
 		exportDefaultStart: -1,
@@ -4870,15 +4754,15 @@ func Print(tree js_ast.AST, symbols ast.SymbolMap, r renamer.Renamer, options Op
 		p.printedExprComments = make(map[logger.Loc]bool)
 	}
 
-	p.astHelpers = js_ast.MakeHelperContext(func(ref ast.Ref) bool {
-		ref = ast.FollowSymbols(symbols, ref)
-		return symbols.Get(ref).Kind == ast.SymbolUnbound
-	})
+	p.isUnbound = func(ref js_ast.Ref) bool {
+		ref = js_ast.FollowSymbols(symbols, ref)
+		return symbols.Get(ref).Kind == js_ast.SymbolUnbound
+	}
 
 	// Add the top-level directive if present
 	for _, directive := range tree.Directives {
 		p.printIndent()
-		p.printQuotedUTF8(directive, 0)
+		p.printQuotedUTF8(directive, options.ASCIIOnly)
 		p.print(";")
 		p.printNewline()
 	}

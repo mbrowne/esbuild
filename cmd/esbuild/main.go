@@ -39,8 +39,7 @@ var helpText = func(colors logger.Colors) string {
                         is browser and cjs when platform is node)
   --loader:X=L          Use loader L to load file extension X, where L is
                         one of: base64 | binary | copy | css | dataurl |
-                        empty | file | global-css | js | json | jsx |
-                        local-css | text | ts | tsx
+                        empty | file | js | json | jsx | text | ts | tsx
   --minify              Minify the output (sets all --minify-* flags)
   --outdir=...          The output directory (for multiple entry points)
   --outfile=...         The output file (for one entry point)
@@ -69,7 +68,6 @@ var helpText = func(colors logger.Colors) string {
                             (default "[name]-[hash]")
   --color=...               Force use of color terminal escapes (true | false)
   --drop:...                Remove certain constructs (console | debugger)
-  --drop-labels=...         Remove labeled statements with these label names
   --entry-names=...         Path template to use for entry point output paths
                             (default "[dir]/[name]", can also use "[hash]")
   --footer:T=...            Text to be appended to each output file of type T
@@ -92,7 +90,6 @@ var helpText = func(colors logger.Colors) string {
   --legal-comments=...      Where to place legal comments (none | inline |
                             eof | linked | external, default eof when bundling
                             and inline otherwise)
-  --line-limit=...          Lines longer than this will be wrap onto a new line
   --log-level=...           Disable logging (verbose | debug | info | warning |
                             error | silent, default info)
   --log-limit=...           Maximum message count or 0 to disable (default 6)
@@ -117,7 +114,6 @@ var helpText = func(colors logger.Colors) string {
   --reserve-props=...       Do not mangle these properties
   --resolve-extensions=...  A comma-separated list of implicit extensions
                             (default ".tsx,.ts,.jsx,.js,.css,.json")
-  --serve-fallback=...      Serve this HTML page when the request doesn't match
   --servedir=...            What to serve in addition to generated output files
   --source-root=...         Sets the "sourceRoot" field in generated source maps
   --sourcefile=...          Set the source file for the source map (for stdin)
@@ -127,7 +123,6 @@ var helpText = func(colors logger.Colors) string {
   --supported:F=...         Consider syntax F to be supported (true | false)
   --tree-shaking=...        Force tree shaking on or off (false | true)
   --tsconfig=...            Use this tsconfig.json file instead of other ones
-  --tsconfig-raw=...        Override all tsconfig.json files with this string
   --version                 Print the current version (` + esbuildVersion + `) and exit
 
 ` + colors.Bold + `Examples:` + colors.Reset + `
@@ -332,16 +327,12 @@ func main() {
 					for {
 						_, err := os.Stdin.Read(buffer)
 						if err != nil {
-							if options := logger.OutputOptionsForArgs(osArgs); options.LogLevel <= logger.LevelInfo {
-								if isWatch {
-									// Mention why watch mode was stopped to reduce confusion, and
-									// call out "--watch=forever" to get the alternative behavior
+							// Mention why watch mode was stopped to reduce confusion, and
+							// call out "--watch=forever" to get the alternative behavior
+							if isWatch {
+								if options := logger.OutputOptionsForArgs(osArgs); options.LogLevel <= logger.LevelInfo {
 									logger.PrintTextWithColor(os.Stderr, options.Color, func(colors logger.Colors) string {
-										return fmt.Sprintf("%s[watch] stopped automatically because stdin was closed (use \"--watch=forever\" to keep watching even after stdin is closed)%s\n", colors.Dim, colors.Reset)
-									})
-								} else if isServeOrWatch {
-									logger.PrintTextWithColor(os.Stderr, options.Color, func(colors logger.Colors) string {
-										return fmt.Sprintf("%s[serve] stopped automatically because stdin was closed (keep stdin open to continue serving)%s\n", colors.Dim, colors.Reset)
+										return fmt.Sprintf("%s[watch] stopped because stdin was closed (use \"--watch=forever\" to keep watching even after stdin is closed)%s\n", colors.Dim, colors.Reset)
 									})
 								}
 							}

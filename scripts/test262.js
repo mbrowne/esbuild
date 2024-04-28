@@ -52,6 +52,7 @@ const whiteBgWhiteColor = isatty ? `\x1b[107;97m` : ''
 const whiteBgBlackColor = isatty ? `\x1b[107;30m` : ''
 
 const skipTheseFeatures = new Set([
+  'decorators',
   'regexp-v-flag',
   'regexp-match-indices',
   'regexp-named-groups',
@@ -188,7 +189,7 @@ const skipEvaluatingTheseTests = new Set([
   //    7: 0x137e3db v8::internal::Runtime_DynamicImportCall(int, unsigned long*, v8::internal::Isolate*) [node]
   //    8: 0x17fd4f4  [node]
   //
-  'language/expressions/dynamic-import/import-assertions/2nd-param-assert-enumeration.js',
+  'language/expressions/dynamic-import/2nd-param-assert-enumeration.js',
 ])
 
 function findFiles() {

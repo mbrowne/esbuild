@@ -47,10 +47,9 @@ type apiHandler struct {
 	servedir         string
 	keyfileToLower   string
 	certfileToLower  string
-	fallback         string
 	serveWaitGroup   sync.WaitGroup
 	activeStreams    []chan serverSentEvent
-	currentHashes    map[string]string
+	buildSummary     buildSummary
 	mutex            sync.Mutex
 }
 
@@ -113,7 +112,7 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	maybeWriteResponseBody := func(bytes []byte) { res.Write(bytes) }
 	isHEAD := req.Method == "HEAD"
 	if isHEAD {
-		maybeWriteResponseBody = func([]byte) { res.Write(nil) }
+		maybeWriteResponseBody = func(bytes []byte) { res.Write(nil) }
 	}
 
 	// Handle GET and HEAD requests
@@ -131,24 +130,16 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		type fileToServe struct {
-			absPath  string
-			contents fs.OpenedFile
-		}
-
 		var kind fs.EntryKind
-		var file fileToServe
+		var fileContents fs.OpenedFile
 		dirEntries := make(map[string]bool)
 		fileEntries := make(map[string]bool)
 
 		// Check for a match with the results if we're within the output directory
 		if outdirQueryPath, ok := stripDirPrefix(queryPath, h.outdirPathPrefix, "/"); ok {
-			resultKind, inMemoryBytes, absPath, isImplicitIndexHTML := h.matchQueryPathToResult(outdirQueryPath, &result, dirEntries, fileEntries)
+			resultKind, inMemoryBytes, isImplicitIndexHTML := h.matchQueryPathToResult(outdirQueryPath, &result, dirEntries, fileEntries)
 			kind = resultKind
-			file = fileToServe{
-				absPath:  absPath,
-				contents: &fs.InMemoryOpenedFile{Contents: inMemoryBytes},
-			}
+			fileContents = &fs.InMemoryOpenedFile{Contents: inMemoryBytes}
 			if isImplicitIndexHTML {
 				queryPath = path.Join(queryPath, "index.html")
 			}
@@ -173,7 +164,7 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 			}
 		}
 
-		// Check for a file in the "servedir" directory
+		// Check for a file in the fallback directory
 		if h.servedir != "" && kind != fs.FileEntry {
 			absPath := h.fs.Join(h.servedir, queryPath)
 			if absDir := h.fs.Dir(absPath); absDir != absPath {
@@ -191,7 +182,7 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 						}
 						if contents, err, _ := h.fs.OpenFile(absPath); err == nil {
 							defer contents.Close()
-							file = fileToServe{absPath: absPath, contents: contents}
+							fileContents = contents
 							kind = fs.FileEntry
 						} else if err != syscall.ENOENT {
 							go h.notifyRequest(time.Since(start), req, http.StatusInternalServerError)
@@ -204,8 +195,8 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 			}
 		}
 
-		// Check for a directory in the "servedir" directory
-		var servedirIndexName string
+		// Check for a directory in the fallback directory
+		var fallbackIndexName string
 		if h.servedir != "" && kind != fs.FileEntry {
 			if entries, err, _ := h.fs.ReadDirectory(h.fs.Join(h.servedir, queryPath)); err == nil {
 				kind = fs.DirEntry
@@ -217,7 +208,7 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 					case fs.FileEntry:
 						fileEntries[name] = true
 						if name == "index.html" {
-							servedirIndexName = name
+							fallbackIndexName = name
 						}
 					}
 				}
@@ -231,7 +222,7 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 
 		// Redirect to a trailing slash for directories
 		if kind == fs.DirEntry && !strings.HasSuffix(req.URL.Path, "/") {
-			res.Header().Set("Location", path.Clean(req.URL.Path)+"/")
+			res.Header().Set("Location", req.URL.Path+"/")
 			go h.notifyRequest(time.Since(start), req, http.StatusFound)
 			res.WriteHeader(http.StatusFound)
 			maybeWriteResponseBody(nil)
@@ -239,26 +230,11 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		}
 
 		// Serve an "index.html" file if present
-		if kind == fs.DirEntry && servedirIndexName != "" {
-			queryPath += "/" + servedirIndexName
-			absPath := h.fs.Join(h.servedir, queryPath)
-			if contents, err, _ := h.fs.OpenFile(absPath); err == nil {
+		if kind == fs.DirEntry && fallbackIndexName != "" {
+			queryPath += "/" + fallbackIndexName
+			if contents, err, _ := h.fs.OpenFile(h.fs.Join(h.servedir, queryPath)); err == nil {
 				defer contents.Close()
-				file = fileToServe{absPath: absPath, contents: contents}
-				kind = fs.FileEntry
-			} else if err != syscall.ENOENT {
-				go h.notifyRequest(time.Since(start), req, http.StatusInternalServerError)
-				res.WriteHeader(http.StatusInternalServerError)
-				maybeWriteResponseBody([]byte(fmt.Sprintf("500 - Internal server error: %s", err.Error())))
-				return
-			}
-		}
-
-		// Serve the fallback HTML page if one was provided
-		if kind != fs.FileEntry && h.fallback != "" {
-			if contents, err, _ := h.fs.OpenFile(h.fallback); err == nil {
-				defer contents.Close()
-				file = fileToServe{absPath: h.fallback, contents: contents}
+				fileContents = contents
 				kind = fs.FileEntry
 			} else if err != syscall.ENOENT {
 				go h.notifyRequest(time.Since(start), req, http.StatusInternalServerError)
@@ -272,7 +248,7 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		if kind == fs.FileEntry {
 			// Default to serving the whole file
 			status := http.StatusOK
-			fileContentsLen := file.contents.Len()
+			fileContentsLen := fileContents.Len()
 			begin := 0
 			end := fileContentsLen
 			isRange := false
@@ -287,7 +263,7 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 			}
 
 			// Try to read the range from the file, which may fail
-			fileBytes, err := file.contents.Read(begin, end)
+			fileBytes, err := fileContents.Read(begin, end)
 			if err != nil {
 				go h.notifyRequest(time.Since(start), req, http.StatusInternalServerError)
 				res.WriteHeader(http.StatusInternalServerError)
@@ -296,7 +272,7 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 			}
 
 			// If we get here, the request was successful
-			if contentType := helpers.MimeTypeByExtension(h.fs.Ext(file.absPath)); contentType != "" {
+			if contentType := helpers.MimeTypeByExtension(path.Ext(queryPath)); contentType != "" {
 				res.Header().Set("Content-Type", contentType)
 			} else {
 				res.Header().Set("Content-Type", "application/octet-stream")
@@ -319,22 +295,6 @@ func (h *apiHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 			go h.notifyRequest(time.Since(start), req, http.StatusOK)
 			maybeWriteResponseBody(html)
 			return
-		}
-	}
-
-	// Satisfy requests for "favicon.ico" to avoid errors in Firefox developer tools
-	if req.Method == "GET" && req.URL.Path == "/favicon.ico" {
-		for _, encoding := range strings.Split(req.Header.Get("Accept-Encoding"), ",") {
-			if semi := strings.IndexByte(encoding, ';'); semi >= 0 {
-				encoding = encoding[:semi]
-			}
-			if strings.TrimSpace(encoding) == "gzip" {
-				res.Header().Set("Content-Encoding", "gzip")
-				res.Header().Set("Content-Type", "image/vnd.microsoft.icon")
-				go h.notifyRequest(time.Since(start), req, http.StatusOK)
-				maybeWriteResponseBody(favicon_ico_gz)
-				return
-			}
 		}
 	}
 
@@ -421,7 +381,7 @@ func (h *apiHandler) serveEventStream(start time.Time, req *http.Request, res ht
 	res.Write([]byte("500 - Event stream error"))
 }
 
-func (h *apiHandler) broadcastBuildResult(result BuildResult, newHashes map[string]string) {
+func (h *apiHandler) broadcastBuildResult(result BuildResult, newSummary buildSummary) {
 	h.mutex.Lock()
 
 	var added []string
@@ -445,11 +405,11 @@ func (h *apiHandler) broadcastBuildResult(result BuildResult, newHashes map[stri
 	// Diff the old and new states, but only if the build succeeded. We shouldn't
 	// make it appear as if all files were removed when there is a build error.
 	if len(result.Errors) == 0 {
-		oldHashes := h.currentHashes
-		h.currentHashes = newHashes
+		oldSummary := h.buildSummary
+		h.buildSummary = newSummary
 
-		for absPath, newHash := range newHashes {
-			if oldHash, ok := oldHashes[absPath]; !ok {
+		for absPath, newHash := range newSummary {
+			if oldHash, ok := oldSummary[absPath]; !ok {
 				if url, ok := urlForPath(absPath); ok {
 					added = append(added, url)
 				}
@@ -460,8 +420,8 @@ func (h *apiHandler) broadcastBuildResult(result BuildResult, newHashes map[stri
 			}
 		}
 
-		for absPath := range oldHashes {
-			if _, ok := newHashes[absPath]; !ok {
+		for absPath := range oldSummary {
+			if _, ok := newSummary[absPath]; !ok {
 				if url, ok := urlForPath(absPath); ok {
 					removed = append(removed, url)
 				}
@@ -551,7 +511,7 @@ func (h *apiHandler) matchQueryPathToResult(
 	result *BuildResult,
 	dirEntries map[string]bool,
 	fileEntries map[string]bool,
-) (fs.EntryKind, []byte, string, bool) {
+) (fs.EntryKind, []byte, bool) {
 	queryIsDir := false
 	queryDir := queryPath
 	if queryDir != "" {
@@ -565,12 +525,12 @@ func (h *apiHandler) matchQueryPathToResult(
 
 			// An exact match
 			if relPath == queryPath {
-				return fs.FileEntry, file.Contents, file.Path, false
+				return fs.FileEntry, file.Contents, false
 			}
 
 			// Serve an "index.html" file if present
 			if dir, base := path.Split(relPath); base == "index.html" && queryDir == dir {
-				return fs.FileEntry, file.Contents, file.Path, true
+				return fs.FileEntry, file.Contents, true
 			}
 
 			// A match inside this directory
@@ -588,10 +548,10 @@ func (h *apiHandler) matchQueryPathToResult(
 
 	// Treat this as a directory if it's non-empty
 	if queryIsDir {
-		return fs.DirEntry, nil, "", false
+		return fs.DirEntry, nil, false
 	}
 
-	return 0, nil, "", false
+	return 0, nil, false
 }
 
 func respondWithDirList(queryPath string, dirEntries map[string]bool, fileEntries map[string]bool) []byte {
@@ -696,21 +656,12 @@ func (ctx *internalContext) Serve(serveOptions ServeOptions) (ServeResult, error
 		return ServeResult{}, errors.New("Must specify both key and certificate for HTTPS")
 	}
 
-	// Validate the "servedir" path
+	// Validate the fallback path
 	if serveOptions.Servedir != "" {
 		if absPath, ok := ctx.realFS.Abs(serveOptions.Servedir); ok {
 			serveOptions.Servedir = absPath
 		} else {
 			return ServeResult{}, fmt.Errorf("Invalid serve path: %s", serveOptions.Servedir)
-		}
-	}
-
-	// Validate the "fallback" path
-	if serveOptions.Fallback != "" {
-		if absPath, ok := ctx.realFS.Abs(serveOptions.Fallback); ok {
-			serveOptions.Fallback = absPath
-		} else {
-			return ServeResult{}, fmt.Errorf("Invalid fallback path: %s", serveOptions.Fallback)
 		}
 	}
 
@@ -728,7 +679,7 @@ func (ctx *internalContext) Serve(serveOptions ServeOptions) (ServeResult, error
 
 		// Compute the output path prefix
 		if serveOptions.Servedir != "" && ctx.args.options.AbsOutputDir != "" {
-			// Make sure the output directory is contained in the "servedir" directory
+			// Make sure the output directory is contained in the fallback directory
 			relPath, ok := ctx.realFS.Rel(serveOptions.Servedir, ctx.args.options.AbsOutputDir)
 			if !ok {
 				return ServeResult{}, fmt.Errorf(
@@ -810,7 +761,6 @@ func (ctx *internalContext) Serve(serveOptions ServeOptions) (ServeResult, error
 		servedir:         serveOptions.Servedir,
 		keyfileToLower:   strings.ToLower(serveOptions.Keyfile),
 		certfileToLower:  strings.ToLower(serveOptions.Certfile),
-		fallback:         serveOptions.Fallback,
 		rebuild: func() BuildResult {
 			if atomic.LoadInt32(&shouldStop) != 0 {
 				// Don't start more rebuilds if we were told to stop

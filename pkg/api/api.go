@@ -79,6 +79,8 @@ package api
 import (
 	"time"
 
+	"github.com/evanw/esbuild/internal/js_ast"
+	"github.com/evanw/esbuild/internal/js_parser"
 	"github.com/evanw/esbuild/internal/logger"
 )
 
@@ -134,7 +136,7 @@ const (
 	ES2022
 )
 
-type Loader uint16
+type Loader uint8
 
 const (
 	LoaderNone Loader = iota
@@ -146,11 +148,9 @@ const (
 	LoaderDefault
 	LoaderEmpty
 	LoaderFile
-	LoaderGlobalCSS
 	LoaderJS
 	LoaderJSON
 	LoaderJSX
-	LoaderLocalCSS
 	LoaderText
 	LoaderTS
 	LoaderTSX
@@ -262,6 +262,14 @@ const (
 	MangleQuotedTrue
 )
 
+// added to expose parser for DCI
+////////////////////////////////////////////////////////////////////////////////
+// Parse API
+
+func Parse(log logger.Log, source logger.Source, options js_parser.Options) (result js_ast.AST, ok bool) {
+	return js_parser.Parse(log, source, options)
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Build API
 
@@ -284,11 +292,9 @@ type BuildOptions struct {
 	MangleQuoted      MangleQuoted           // Documentation: https://esbuild.github.io/api/#mangle-props
 	MangleCache       map[string]interface{} // Documentation: https://esbuild.github.io/api/#mangle-props
 	Drop              Drop                   // Documentation: https://esbuild.github.io/api/#drop
-	DropLabels        []string               // Documentation: https://esbuild.github.io/api/#drop-labels
 	MinifyWhitespace  bool                   // Documentation: https://esbuild.github.io/api/#minify
 	MinifyIdentifiers bool                   // Documentation: https://esbuild.github.io/api/#minify
 	MinifySyntax      bool                   // Documentation: https://esbuild.github.io/api/#minify
-	LineLimit         int                    // Documentation: https://esbuild.github.io/api/#line-limit
 	Charset           Charset                // Documentation: https://esbuild.github.io/api/#charset
 	TreeShaking       TreeShaking            // Documentation: https://esbuild.github.io/api/#tree-shaking
 	IgnoreAnnotations bool                   // Documentation: https://esbuild.github.io/api/#ignore-annotations
@@ -369,7 +375,6 @@ type BuildResult struct {
 type OutputFile struct {
 	Path     string
 	Contents []byte
-	Hash     string
 }
 
 // Documentation: https://esbuild.github.io/api/#build
@@ -419,11 +424,9 @@ type TransformOptions struct {
 	MangleQuoted      MangleQuoted           // Documentation: https://esbuild.github.io/api/#mangle-props
 	MangleCache       map[string]interface{} // Documentation: https://esbuild.github.io/api/#mangle-props
 	Drop              Drop                   // Documentation: https://esbuild.github.io/api/#drop
-	DropLabels        []string               // Documentation: https://esbuild.github.io/api/#drop-labels
 	MinifyWhitespace  bool                   // Documentation: https://esbuild.github.io/api/#minify
 	MinifyIdentifiers bool                   // Documentation: https://esbuild.github.io/api/#minify
 	MinifySyntax      bool                   // Documentation: https://esbuild.github.io/api/#minify
-	LineLimit         int                    // Documentation: https://esbuild.github.io/api/#line-limit
 	Charset           Charset                // Documentation: https://esbuild.github.io/api/#charset
 	TreeShaking       TreeShaking            // Documentation: https://esbuild.github.io/api/#tree-shaking
 	IgnoreAnnotations bool                   // Documentation: https://esbuild.github.io/api/#ignore-annotations
@@ -474,7 +477,6 @@ type ServeOptions struct {
 	Servedir  string
 	Keyfile   string
 	Certfile  string
-	Fallback  string
 	OnRequest func(ServeOnRequestArgs)
 }
 
@@ -646,7 +648,6 @@ type OnLoadArgs struct {
 	Namespace  string
 	Suffix     string
 	PluginData interface{}
-	With       map[string]string
 }
 
 // Documentation: https://esbuild.github.io/plugins/#on-load-results
@@ -675,7 +676,6 @@ const (
 	ResolveJSDynamicImport
 	ResolveJSRequireResolve
 	ResolveCSSImportRule
-	ResolveCSSComposesFrom
 	ResolveCSSURLToken
 )
 

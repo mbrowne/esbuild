@@ -81,9 +81,7 @@ var knownGlobals = [][]string{
 
 	// Symbol: Static properties
 	// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol#static_properties
-	{"Symbol", "asyncDispose"},
 	{"Symbol", "asyncIterator"},
-	{"Symbol", "dispose"},
 	{"Symbol", "hasInstance"},
 	{"Symbol", "isConcatSpreadable"},
 	{"Symbol", "iterator"},
@@ -869,39 +867,31 @@ type DefineExpr struct {
 
 type DefineData struct {
 	DefineExpr *DefineExpr
-	Flags      DefineFlags
-}
 
-type DefineFlags uint8
-
-const (
 	// True if accessing this value is known to not have any side effects. For
 	// example, a bare reference to "Object.create" can be removed because it
 	// does not have any observable side effects.
-	CanBeRemovedIfUnused DefineFlags = 1 << iota
+	CanBeRemovedIfUnused bool
 
 	// True if a call to this value is known to not have any side effects. For
 	// example, a bare call to "Object()" can be removed because it does not
 	// have any observable side effects.
-	CallCanBeUnwrappedIfUnused
+	CallCanBeUnwrappedIfUnused bool
 
 	// If true, the user has indicated that every direct calls to a property on
 	// this object and all of that call's arguments are to be removed from the
 	// output, even when the arguments have side effects. This is used to
 	// implement the "--drop:console" flag.
-	MethodCallsMustBeReplacedWithUndefined
-
-	// Symbol values are known to not have side effects when used as property
-	// names in class declarations and object literals.
-	IsSymbolInstance
-)
-
-func (flags DefineFlags) Has(flag DefineFlags) bool {
-	return (flags & flag) != 0
+	MethodCallsMustBeReplacedWithUndefined bool
 }
 
 func mergeDefineData(old DefineData, new DefineData) DefineData {
-	new.Flags |= old.Flags
+	if old.CanBeRemovedIfUnused {
+		new.CanBeRemovedIfUnused = true
+	}
+	if old.CallCanBeUnwrappedIfUnused {
+		new.CallCanBeUnwrappedIfUnused = true
+	}
 	return new
 }
 
@@ -945,18 +935,9 @@ func ProcessDefines(userDefines map[string]DefineData) ProcessedDefines {
 	for _, parts := range knownGlobals {
 		tail := parts[len(parts)-1]
 		if len(parts) == 1 {
-			result.IdentifierDefines[tail] = DefineData{Flags: CanBeRemovedIfUnused}
+			result.IdentifierDefines[tail] = DefineData{CanBeRemovedIfUnused: true}
 		} else {
-			flags := CanBeRemovedIfUnused
-
-			// All properties on the "Symbol" global are currently symbol instances
-			// (i.e. "typeof Symbol.iterator === 'symbol'"). This is used to avoid
-			// treating properties with these names as having side effects.
-			if parts[0] == "Symbol" {
-				flags |= IsSymbolInstance
-			}
-
-			result.DotDefines[tail] = append(result.DotDefines[tail], DotDefine{Parts: parts, Data: DefineData{Flags: flags}})
+			result.DotDefines[tail] = append(result.DotDefines[tail], DotDefine{Parts: parts, Data: DefineData{CanBeRemovedIfUnused: true}})
 		}
 	}
 
